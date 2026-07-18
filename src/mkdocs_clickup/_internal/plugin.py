@@ -152,8 +152,8 @@ def _generate_page_markdown(
 
 # NOTE: the link target format (URL vs. ClickUp internal page ID) will need
 # revisiting once the ClickUp API spike clarifies ClickUp's addressing model
-# (see research/clickup-api-spike.md). The resolution logic below — finding what
-# a relative link points to within the doc tree — remains useful groundwork either way.
+# (see README.md's "ClickUp API research" section). The resolution logic below —
+# finding what a relative link points to within the doc tree — remains useful groundwork either way.
 def _convert_to_absolute_links(soup: Soup, base_uri: str, page_uri: str) -> None:
     """Convert relative links to absolute ones in the HTML.
 

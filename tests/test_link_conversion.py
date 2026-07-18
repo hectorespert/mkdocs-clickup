@@ -1,7 +1,7 @@
 """Unit tests for link conversion helpers.
 
 NOTE: these assertions may need revisiting once the ClickUp API spike clarifies
-ClickUp's addressing model (URL vs. internal page ID) — see research/clickup-api-spike.md.
+ClickUp's addressing model (URL vs. internal page ID) — see README.md's "ClickUp API research" section.
 """
 
 from __future__ import annotations

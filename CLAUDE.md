@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `mkdocs-clickup` is a MkDocs plugin to publish documentation to [ClickUp Pages](https://clickup.com/features/docs). It started as a fork of [pawamoy/mkdocs-llmstxt](https://github.com/pawamoy/mkdocs-llmstxt) (a plugin that generates an `/llms.txt` file), reusing its HTML→Markdown conversion pipeline as a foundation — the llms.txt-specific behavior itself has been stripped out (bootstrap phase, see `git log`).
 
-**Current state: bootstrap skeleton.** The plugin converts each page's HTML to Markdown and stores it (`on_page_content`), but does not yet publish anything to ClickUp — that requires a ClickUp API research spike (`research/clickup-api-spike.md`, once written) followed by an OpenSpec-driven implementation change (see `openspec/`). Don't assume ClickUp integration exists yet; check `src/mkdocs_clickup/_internal/plugin.py` for what's actually implemented.
+**Current state: bootstrap skeleton.** The plugin converts each page's HTML to Markdown and stores it (`on_page_content`), but does not yet publish anything to ClickUp — that requires the ClickUp API research spike (see README.md's "ClickUp API research" section) followed by an OpenSpec-driven implementation change (see `openspec/`). Don't assume ClickUp integration exists yet; check `src/mkdocs_clickup/_internal/plugin.py` for what's actually implemented.
 
 The project is scaffolded from the [copier-uv](https://github.com/pawamoy/copier-uv) template (see `.copier-answers.yml`); "Template upgrade" commits are automated re-applications of that template and shouldn't be hand-edited piecemeal.
 
