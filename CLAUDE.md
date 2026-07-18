@@ -14,19 +14,19 @@ The `LICENSE` carries two copyright holders: Timothée Mazzucotelli (original `m
 
 ## Commands
 
-This repo uses `make` as a thin wrapper: with `direnv allow`'d, `make <task>` forwards to `scripts/make <task>` (a `duty`-based Python task runner defined in `duties.py`). Without direnv, run `python scripts/make <task>` directly, or invoke the underlying tools yourself.
+Tasks run through `scripts/make` (a `duty`-based Python task runner defined in `duties.py`): `python scripts/make <task>`. There is no Makefile — with `direnv allow`'d, `.envrc` puts `scripts/` on `PATH`, so `make <task>` works directly as a shorthand; without direnv, always use the `python scripts/make <task>` form (this is what CI uses).
 
-- `make setup` — install dependencies via `uv sync` (first-time setup)
-- `make test` — run the full test suite (pytest, parallelized with `pytest-xdist`, coverage on)
-- `make check` — run everything CI checks: quality (ruff), types (mypy), docs build, and API compatibility
-- `make check-quality` — ruff lint only (`config/ruff.toml`)
-- `make check-types` — mypy only (`config/mypy.ini`)
-- `make check-docs` — build the docs strictly (fails on warnings)
-- `make check-api` — check for breaking API changes via `griffe check`
-- `make format` — auto-fix + format code with ruff
-- `make docs` — serve docs locally at `127.0.0.1:8000`
-- `make coverage` — combine and report coverage (text + HTML)
-- `make run <cmd>` / `make multirun <cmd>` — run an arbitrary command in the project env (multirun = across all supported Python versions)
+- `python scripts/make setup` — install dependencies via `uv sync` (first-time setup)
+- `python scripts/make test` — run the full test suite (pytest, parallelized with `pytest-xdist`, coverage on)
+- `python scripts/make check` — run everything CI checks: quality (ruff), types (mypy), docs build, and API compatibility
+- `python scripts/make check-quality` — ruff lint only (`config/ruff.toml`)
+- `python scripts/make check-types` — mypy only (`config/mypy.ini`)
+- `python scripts/make check-docs` — build the docs strictly (fails on warnings)
+- `python scripts/make check-api` — check for breaking API changes via `griffe check`
+- `python scripts/make format` — auto-fix + format code with ruff
+- `python scripts/make docs` — serve docs locally at `127.0.0.1:8000`
+- `python scripts/make coverage` — combine and report coverage (text + HTML)
+- `python scripts/make run <cmd>` / `python scripts/make multirun <cmd>` — run an arbitrary command in the project env (multirun = across all supported Python versions)
 
 Run a single test file or test directly with pytest (bypassing the `make test` wrapper when you need finer control):
 
