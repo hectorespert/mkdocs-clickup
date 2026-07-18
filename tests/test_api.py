@@ -10,7 +10,7 @@ import griffe
 import pytest
 from mkdocstrings import Inventory
 
-import mkdocs_llmstxt
+import mkdocs_clickup
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -19,19 +19,19 @@ if TYPE_CHECKING:
 @pytest.fixture(name="loader", scope="module")
 def _fixture_loader() -> griffe.GriffeLoader:
     loader = griffe.GriffeLoader()
-    loader.load("mkdocs_llmstxt")
+    loader.load("mkdocs_clickup")
     loader.resolve_aliases()
     return loader
 
 
 @pytest.fixture(name="internal_api", scope="module")
 def _fixture_internal_api(loader: griffe.GriffeLoader) -> griffe.Module:
-    return loader.modules_collection["mkdocs_llmstxt._internal"]
+    return loader.modules_collection["mkdocs_clickup._internal"]
 
 
 @pytest.fixture(name="public_api", scope="module")
 def _fixture_public_api(loader: griffe.GriffeLoader) -> griffe.Module:
-    return loader.modules_collection["mkdocs_llmstxt"]
+    return loader.modules_collection["mkdocs_clickup"]
 
 
 def _yield_public_objects(
@@ -97,11 +97,11 @@ def _fixture_inventory() -> Inventory:
 
 
 def test_exposed_objects(modulelevel_internal_objects: list[griffe.Object | griffe.Alias]) -> None:
-    """All public objects in the internal API are exposed under `mkdocs_llmstxt`."""
+    """All public objects in the internal API are exposed under `mkdocs_clickup`."""
     not_exposed = [
         obj.path
         for obj in modulelevel_internal_objects
-        if obj.name not in mkdocs_llmstxt.__all__ or not hasattr(mkdocs_llmstxt, obj.name)
+        if obj.name not in mkdocs_clickup.__all__ or not hasattr(mkdocs_clickup, obj.name)
     ]
     assert not not_exposed, "Objects not exposed:\n" + "\n".join(sorted(not_exposed))
 
@@ -122,7 +122,7 @@ def test_single_locations(public_api: griffe.Module) -> None:
         return obj.is_public and (obj.parent is None or _public_path(obj.parent))
 
     multiple_locations = {}
-    for obj_name in mkdocs_llmstxt.__all__:
+    for obj_name in mkdocs_clickup.__all__:
         obj = public_api[obj_name]
         if obj.aliases and (
             public_aliases := [path for path, alias in obj.aliases.items() if path != obj.path and _public_path(alias)]
@@ -153,12 +153,12 @@ def test_inventory_matches_api(
     """The inventory doesn't contain any additional Python object."""
     not_in_api = []
     public_api_paths = {obj.path for obj in public_objects}
-    public_api_paths.add("mkdocs_llmstxt")
+    public_api_paths.add("mkdocs_clickup")
     for item in inventory.values():
         if (
             item.domain == "py"
             and "(" not in item.name
-            and (item.name == "mkdocs_llmstxt" or item.name.startswith("mkdocs_llmstxt."))
+            and (item.name == "mkdocs_clickup" or item.name.startswith("mkdocs_clickup."))
         ):
             obj = loader.modules_collection[item.name]
             if obj.path not in public_api_paths and not any(path in public_api_paths for path in obj.aliases):

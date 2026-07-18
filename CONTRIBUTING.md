@@ -9,7 +9,7 @@ Nothing easier!
 Fork and clone the repository, then:
 
 ```bash
-cd mkdocs-llmstxt
+cd mkdocs-clickup
 make setup
 ```
 

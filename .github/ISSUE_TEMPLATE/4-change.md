@@ -2,7 +2,6 @@
 name: Change request
 about: Suggest any other kind of change for this project.
 title: "change: "
-assignees: pawamoy
 ---
 
 ### Is your change request related to a problem? Please describe.

@@ -1,4 +1,4 @@
-"""Tests suite for `mkdocs_llmstxt`."""
+"""Tests suite for `mkdocs_clickup`."""
 
 from pathlib import Path
 

@@ -3,9 +3,12 @@ requires = ["pdm-backend"]
 build-backend = "pdm.backend"
 
 [project]
-name = "mkdocs-llmstxt"
-description = "MkDocs plugin to generate an /llms.txt file."
-authors = [{name = "Timothée Mazzucotelli", email = "dev@pawamoy.fr"}]
+name = "mkdocs-clickup"
+description = "MkDocs plugin to publish documentation to ClickUp Pages."
+authors = [
+    {name = "Timothée Mazzucotelli", email = "dev@pawamoy.fr"},
+    {name = "Hector Espert", email = "hectorespertpardo@gmail.com"},
+]
 license = "ISC"
 license-files = ["LICENSE"]
 readme = "README.md"
@@ -36,17 +39,15 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://pawamoy.github.io/mkdocs-llmstxt"
-Documentation = "https://pawamoy.github.io/mkdocs-llmstxt"
-Changelog = "https://pawamoy.github.io/mkdocs-llmstxt/changelog"
-Repository = "https://github.com/pawamoy/mkdocs-llmstxt"
-Issues = "https://github.com/pawamoy/mkdocs-llmstxt/issues"
-Discussions = "https://github.com/pawamoy/mkdocs-llmstxt/discussions"
-Gitter = "https://gitter.im/mkdocs-llmstxt/community"
-Funding = "https://github.com/sponsors/pawamoy"
+Homepage = "https://hectorespert.github.io/mkdocs-clickup"
+Documentation = "https://hectorespert.github.io/mkdocs-clickup"
+Changelog = "https://hectorespert.github.io/mkdocs-clickup/changelog"
+Repository = "https://github.com/hectorespert/mkdocs-clickup"
+Issues = "https://github.com/hectorespert/mkdocs-clickup/issues"
+Discussions = "https://github.com/hectorespert/mkdocs-clickup/discussions"
 
 [project.entry-points."mkdocs.plugins"]
-llmstxt = "mkdocs_llmstxt:MkdocsLLMsTxtPlugin"
+clickup = "mkdocs_clickup:MkdocsClickUpPlugin"
 
 [tool.pdm.version]
 source = "call"
@@ -99,7 +100,6 @@ ci = [
     "mkdocs>=1.6",
     "mkdocs-coverage>=1.0",
     "mkdocs-git-revision-date-localized-plugin>=1.2",
-    "mkdocs-llmstxt>=0.2",
     "mkdocs-material>=9.5",
     "mkdocs-minify-plugin>=0.8",
     "mkdocs-section-index>=0.3",

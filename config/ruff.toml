@@ -78,7 +78,7 @@ docstring-quotes = "double"
 ban-relative-imports = "all"
 
 [lint.isort]
-known-first-party = ["mkdocs_llmstxt"]
+known-first-party = ["mkdocs_clickup"]
 
 [lint.pydocstyle]
 convention = "google"

@@ -3,7 +3,6 @@ name: Bug report
 about: Create a bug report to help us improve.
 title: "bug: "
 labels: unconfirmed
-assignees: [pawamoy]
 ---
 
 ### Description of the bug
@@ -50,7 +49,7 @@ PASTE TRACEBACK HERE
      redacting sensitive information. -->
 
 ```bash
-python -m mkdocs_llmstxt._internal.debug  # | xclip -selection clipboard
+python -m mkdocs_clickup._internal.debug  # | xclip -selection clipboard
 ```
 
 PASTE MARKDOWN OUTPUT HERE

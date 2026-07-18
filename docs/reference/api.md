@@ -4,4 +4,4 @@ hide:
 - navigation
 ---
 
-# ::: mkdocs_llmstxt
+# ::: mkdocs_clickup
