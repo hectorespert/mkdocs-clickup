@@ -9,7 +9,7 @@ import pytest
 from mkdocs.config.defaults import MkDocsConfig
 
 if TYPE_CHECKING:
-    from mkdocs_llmstxt._internal.plugin import MkdocsLLMsTxtPlugin
+    from mkdocs_clickup._internal.plugin import MkdocsClickUpPlugin
 
 
 @pytest.fixture(name="mkdocs_conf")
@@ -43,6 +43,6 @@ def fixture_mkdocs_conf(request: pytest.FixtureRequest, tmp_path: Path) -> MkDoc
 
 
 @pytest.fixture(name="plugin")
-def fixture_plugin(mkdocs_conf: MkDocsConfig) -> MkdocsLLMsTxtPlugin:
+def fixture_plugin(mkdocs_conf: MkDocsConfig) -> MkdocsClickUpPlugin:
     """Return a plugin instance."""
-    return mkdocs_conf.plugins["llmstxt"]  # type: ignore[return-value]
+    return mkdocs_conf.plugins["clickup"]  # type: ignore[return-value]

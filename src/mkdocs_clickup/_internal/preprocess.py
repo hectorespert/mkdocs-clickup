@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 def _load_module(module_path: str) -> ModuleType:
     module_name = module_path.rsplit("/", 1)[-1].rsplit(".", 1)[-1]
-    module_name = f"mkdocs_llmstxt.user_config.{module_name}"
+    module_name = f"mkdocs_clickup.user_config.{module_name}"
     spec = spec_from_file_location(module_name, module_path)
     if spec and spec.loader:
         module = module_from_spec(spec)

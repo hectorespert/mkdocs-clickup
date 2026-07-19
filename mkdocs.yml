@@ -1,11 +1,11 @@
-site_name: "mkdocs-llmstxt"
-site_description: "MkDocs plugin to generate an /llms.txt file."
-site_url: "https://pawamoy.github.io/mkdocs-llmstxt"
-repo_url: "https://github.com/pawamoy/mkdocs-llmstxt"
-repo_name: "pawamoy/mkdocs-llmstxt"
+site_name: "mkdocs-clickup"
+site_description: "MkDocs plugin to publish documentation to ClickUp Pages."
+site_url: "https://hectorespert.github.io/mkdocs-clickup"
+repo_url: "https://github.com/hectorespert/mkdocs-clickup"
+repo_name: "hectorespert/mkdocs-clickup"
 site_dir: "site"
-watch: [mkdocs.yml, README.md, CONTRIBUTING.md, CHANGELOG.md, src/mkdocs_llmstxt]
-copyright: Copyright &copy; 2025 Timothée Mazzucotelli
+watch: [mkdocs.yml, README.md, CONTRIBUTING.md, CHANGELOG.md, src/mkdocs_clickup]
+copyright: Copyright &copy; 2025 Timothée Mazzucotelli, 2026 Hector Espert
 edit_uri: edit/main/docs/
 
 validation:
@@ -24,7 +24,7 @@ nav:
   - Contributing: contributing.md
   - Code of Conduct: code_of_conduct.md
   - Coverage report: coverage.md
-- Author's website: https://pawamoy.github.io/
+- Author's website: https://github.com/hectorespert
 
 theme:
   name: material
@@ -132,14 +132,6 @@ plugins:
           show_symbol_type_toc: true
           signature_crossrefs: true
           summary: true
-- llmstxt:
-    full_output: llms-full.txt
-    markdown_description: This plugin automatically generates llms.txt files.
-    sections:
-      Usage documentation:
-      - index.md
-      API reference:
-      - reference/api.md
 - git-revision-date-localized:
     enabled: !ENV [DEPLOY, false]
     enable_creation_date: true
@@ -151,15 +143,9 @@ plugins:
 extra:
   social:
   - icon: fontawesome/brands/github
-    link: https://github.com/pawamoy
-  - icon: fontawesome/brands/mastodon
-    link: https://fosstodon.org/@pawamoy
-  - icon: fontawesome/brands/twitter
-    link: https://twitter.com/pawamoy
-  - icon: fontawesome/brands/gitter
-    link: https://gitter.im/mkdocs-llmstxt/community
+    link: https://github.com/hectorespert
   - icon: fontawesome/brands/python
-    link: https://pypi.org/project/mkdocs-llmstxt/
+    link: https://pypi.org/project/mkdocs-clickup/
   analytics:
     feedback:
       title: Was this page helpful?

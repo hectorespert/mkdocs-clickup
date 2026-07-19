@@ -1,10 +1,14 @@
-"""Unit tests for link conversion helpers."""
+"""Unit tests for link conversion helpers.
+
+NOTE: these assertions may need revisiting once the ClickUp API spike clarifies
+ClickUp's addressing model (URL vs. internal page ID) — see README.md's "ClickUp API research" section.
+"""
 
 from __future__ import annotations
 
 import pytest
 
-from mkdocs_llmstxt._internal.plugin import _convert_to_absolute_link
+from mkdocs_clickup._internal.plugin import _convert_to_absolute_link
 
 BASE_URI = "https://example.org/en/0.1.34/"
 PAGE_DIR = "page2"

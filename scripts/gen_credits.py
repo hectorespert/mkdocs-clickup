@@ -55,7 +55,11 @@ def _extra_marker(req: Requirement) -> str | None:
     if not req.marker:
         return None
     try:
-        return next(marker[2].value for marker in req.marker._markers if getattr(marker[0], "value", None) == "extra")
+        return next(
+            marker[2].value  # type: ignore[union-attr]
+            for marker in req.marker._markers
+            if getattr(marker[0], "value", None) == "extra"
+        )
     except StopIteration:
         return None
 
@@ -88,7 +92,7 @@ def _set_license(metadata: PackageMetadata) -> None:
 def _get_deps(base_deps: dict[str, Requirement], metadata: Metadata) -> Metadata:
     deps = {}
     for dep_name, dep_req in base_deps.items():
-        if dep_name not in metadata or dep_name == "mkdocs-llmstxt":
+        if dep_name not in metadata or dep_name == "mkdocs-clickup":
             continue
         metadata[dep_name]["spec"] |= {str(spec) for spec in dep_req.specifier}  # type: ignore[operator]
         metadata[dep_name]["extras"] |= dep_req.extras  # type: ignore[operator]

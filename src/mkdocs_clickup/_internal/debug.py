@@ -56,7 +56,7 @@ def _interpreter_name_version() -> tuple[str, str]:
     return "", "0.0.0"
 
 
-def _get_version(dist: str = "mkdocs-llmstxt") -> str:
+def _get_version(dist: str = "mkdocs-clickup") -> str:
     """Get version of the given distribution.
 
     Parameters:
@@ -78,8 +78,8 @@ def _get_debug_info() -> _Environment:
         Environment information.
     """
     py_name, py_version = _interpreter_name_version()
-    packages = ["mkdocs-llmstxt"]
-    variables = ["PYTHONPATH", *[var for var in os.environ if var.startswith("MKDOCS_LLMSTXT")]]
+    packages = ["mkdocs-clickup"]
+    variables = ["PYTHONPATH", *[var for var in os.environ if var.startswith("MKDOCS_CLICKUP")]]
     return _Environment(
         interpreter_name=py_name,
         interpreter_version=py_version,
