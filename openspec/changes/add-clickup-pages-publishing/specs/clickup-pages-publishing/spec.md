@@ -14,19 +14,30 @@ The plugin SHALL publish every page that MkDocs converts to Markdown. There is n
 - **WHEN** a MkDocs build completes with N pages converted to Markdown
 - **THEN** the plugin SHALL attempt to create N ClickUp Pages, one per converted page, with no exclusions
 
-### Requirement: Required workspace and Doc configuration
-The plugin configuration SHALL require `workspace_id` and `doc_id`, identifying an existing ClickUp Workspace and Doc to publish into. The plugin SHALL NOT create a Workspace or Doc itself.
+### Requirement: Publishing is opt-in per invocation
+The plugin SHALL only attempt to publish pages to ClickUp when the `PUBLISH_TO_CLICKUP` environment variable is set to a truthy value. When it is unset or falsy, `on_post_build` SHALL do nothing — no configuration validation, no HTTP calls — regardless of whether `workspace_id`, `doc_id`, or the API token are set or valid.
 
-#### Scenario: Missing workspace_id or doc_id
-- **WHEN** the plugin config does not include both `workspace_id` and `doc_id`
-- **THEN** the plugin SHALL raise an error during `on_config` and SHALL NOT attempt to publish any pages
+#### Scenario: Publishing disabled by default
+- **WHEN** a MkDocs build runs (via `build`, `serve`, or `gh-deploy`) without `PUBLISH_TO_CLICKUP` set to a truthy value
+- **THEN** the plugin SHALL NOT make any ClickUp API requests and SHALL NOT validate `workspace_id`, `doc_id`, or the API token
 
-### Requirement: API token from environment variable
-The plugin SHALL read the ClickUp API token from the `CLICKUP_API_TOKEN` environment variable. The plugin configuration SHALL NOT accept the token as a `mkdocs.yml` value.
+#### Scenario: Publishing enabled explicitly
+- **WHEN** `PUBLISH_TO_CLICKUP` is set to a truthy value and a MkDocs build completes
+- **THEN** the plugin SHALL validate its ClickUp configuration and proceed to publish converted pages
 
-#### Scenario: Missing token
-- **WHEN** the `CLICKUP_API_TOKEN` environment variable is not set
-- **THEN** the plugin SHALL raise an error before attempting to publish any pages
+### Requirement: Required workspace and Doc configuration when publishing
+`workspace_id` and `doc_id` (identifying an existing ClickUp Workspace and Doc to publish into) are optional at the plugin's configuration-schema level, so that builds which do not publish are not forced to set them. When publishing is enabled (`PUBLISH_TO_CLICKUP` is set), the plugin SHALL require both to be present. The plugin SHALL NOT create a Workspace or Doc itself.
+
+#### Scenario: Missing workspace_id or doc_id while publishing is enabled
+- **WHEN** `PUBLISH_TO_CLICKUP` is set to a truthy value and the plugin config does not include both `workspace_id` and `doc_id`
+- **THEN** the plugin SHALL raise an error during `on_post_build`, before attempting to publish any pages
+
+### Requirement: API token from environment variable, validated when publishing
+When publishing is enabled, the plugin SHALL read the ClickUp API token from the `CLICKUP_API_TOKEN` environment variable. The plugin configuration SHALL NOT accept the token as a `mkdocs.yml` value.
+
+#### Scenario: Missing token while publishing is enabled
+- **WHEN** `PUBLISH_TO_CLICKUP` is set to a truthy value and the `CLICKUP_API_TOKEN` environment variable is not set
+- **THEN** the plugin SHALL raise an error during `on_post_build`, before attempting to publish any pages
 
 ### Requirement: Flat page creation
 Pages SHALL be created directly under the configured Doc with no parent page — the plugin SHALL NOT set `parent_page_id` or otherwise nest created pages.
@@ -41,6 +52,13 @@ The plugin SHALL always create a new ClickUp Page for each MkDocs page on every 
 #### Scenario: Same page published across multiple builds
 - **WHEN** the same MkDocs page is published in two separate builds
 - **THEN** the plugin SHALL create two separate ClickUp Pages, with each build unaware of ClickUp Pages created by prior builds
+
+### Requirement: Links are published as-authored
+Markdown content published to ClickUp SHALL preserve relative links exactly as they appear in the generated Markdown. The plugin SHALL NOT rewrite relative links into absolute URLs and SHALL NOT require a `site_url` to be configured.
+
+#### Scenario: Relative link left untouched
+- **WHEN** a MkDocs page contains a relative link to another page
+- **THEN** the Markdown content sent to ClickUp for that page SHALL contain that same relative link, unmodified
 
 ### Requirement: Publish failures abort the build
 If creating any ClickUp Page fails (a non-success API response or a network/connection error), the plugin SHALL raise an error that fails the MkDocs build, rather than silently skipping the page or continuing to the next one.
