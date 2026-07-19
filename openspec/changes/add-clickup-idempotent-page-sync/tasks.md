@@ -31,6 +31,6 @@
 
 ## 5. Manual verification (real workspace)
 
-- [ ] 5.1 Run `PUBLISH_TO_CLICKUP=1 mkdocs build` twice against a real ClickUp Doc and confirm the second run updates the same ClickUp pages (same `page_id`/URL) instead of creating duplicates
-- [ ] 5.2 Remove or rename a page's source file, rebuild, and confirm the old ClickUp page is archived (disappears from the Doc's page list) and, if renamed, a new page appears
-- [ ] 5.3 Confirm two pages published with identical titles update independently across builds without cross-matching
+- [x] 5.1 Run `PUBLISH_TO_CLICKUP=1 mkdocs build` twice against a real ClickUp Doc and confirm the second run updates the same ClickUp pages (same `page_id`/URL) instead of creating duplicates
+- [x] 5.2 Remove or rename a page's source file, rebuild, and confirm the old ClickUp page is archived (disappears from the Doc's page list) and, if renamed, a new page appears
+- [x] 5.3 Confirm two pages published with identical titles update independently across builds without cross-matching
