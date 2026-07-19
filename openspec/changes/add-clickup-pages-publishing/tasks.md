@@ -30,3 +30,10 @@
 ## 5. Docs
 
 - [ ] 5.1 Update README.md's "Usage" section with the new optional-but-required-to-publish config (`workspace_id`, `doc_id`), the `CLICKUP_API_TOKEN` and `PUBLISH_TO_CLICKUP` environment variables, and notes on the two known v1 limitations: always-creates/duplicates, and links published as-authored (not rewritten)
+
+## 6. Manual verification (real ClickUp, not mocked)
+
+- [ ] 6.1 Build a minimal throwaway MkDocs site using the plugin against a real ClickUp test/sandbox Workspace and Doc, with a real `CLICKUP_API_TOKEN` and `PUBLISH_TO_CLICKUP=1 mkdocs build`
+- [ ] 6.2 Confirm the page(s) actually appear in ClickUp, with content correctly rendered from Markdown and no unexpected formatting artifacts
+- [ ] 6.3 Confirm no `parent_page_id`/nesting — pages appear flat, directly under the Doc
+- [ ] 6.4 Run the same build a second time and confirm two separate pages are created (validates the known duplicate-on-rebuild behavior is real, not just asserted by mocked tests)
