@@ -41,6 +41,13 @@ An existing ClickUp page whose `sub_title` matches no current MkDocs page's `src
 
 ## MODIFIED Requirements
 
+### Requirement: Publish each converted page as a ClickUp Page
+The plugin SHALL publish a ClickUp Page for every MkDocs page whose HTML was converted to Markdown during the build — creating it if no existing ClickUp page matches, or updating it in place if one does.
+
+#### Scenario: Page published on build completion
+- **WHEN** a MkDocs site build completes and pages have been converted to Markdown
+- **THEN** the plugin SHALL send a create or update request for each converted page, depending on whether an existing ClickUp page matches it, using the page's title as the ClickUp Page name and its generated Markdown as the page content with `content_format: text/md`
+
 ### Requirement: Publish failures abort the build
 If creating or updating any ClickUp Page fails (a non-success API response or a network/connection error), the plugin SHALL raise an error that fails the MkDocs build, rather than silently skipping the page or continuing to the next one. This does NOT apply to orphan-archival failures, which are handled separately as a non-fatal, best-effort operation.
 
