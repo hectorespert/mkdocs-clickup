@@ -11,4 +11,5 @@ class _PluginConfig(BaseConfig):
 
     autoclean = mkconf.Type(bool, default=True)
     preprocess = mkconf.Optional(mkconf.File(exists=True))
-    base_url = mkconf.Optional(mkconf.Type(str))
+    workspace_id = mkconf.Optional(mkconf.Type(str))
+    doc_id = mkconf.Optional(mkconf.Type(str))

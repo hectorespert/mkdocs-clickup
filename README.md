@@ -6,7 +6,7 @@
 
 MkDocs plugin to publish documentation to [ClickUp Pages](https://clickup.com/features/docs).
 
-This project is a fork of [mkdocs-llmstxt](https://github.com/pawamoy/mkdocs-llmstxt) by Timothée Mazzucotelli, reusing its HTML-to-Markdown conversion pipeline as a foundation. It is under active development — the ClickUp publishing behavior itself is not implemented yet.
+This project is a fork of [mkdocs-llmstxt](https://github.com/pawamoy/mkdocs-llmstxt) by Timothée Mazzucotelli, reusing its HTML-to-Markdown conversion pipeline as a foundation.
 
 ## Installation
 
@@ -16,7 +16,29 @@ pip install mkdocs-clickup
 
 ## Usage
 
-Documentation will be added here once the plugin's ClickUp publishing behavior is implemented.
+Enable the plugin in `mkdocs.yml`, pointing it at an existing ClickUp Workspace and Doc:
+
+```yaml title="mkdocs.yml"
+plugins:
+- clickup:
+    workspace_id: "9010000000"
+    doc_id: "abc123"
+```
+
+Publishing is opt-in per invocation, via the `PUBLISH_TO_CLICKUP` environment variable, and requires a `CLICKUP_API_TOKEN`:
+
+```bash
+PUBLISH_TO_CLICKUP=1 CLICKUP_API_TOKEN=pk_... mkdocs build
+```
+
+Without `PUBLISH_TO_CLICKUP` set, the plugin does nothing — `mkdocs build`, `mkdocs serve`, and `mkdocs gh-deploy` all fire the same build hooks internally, and publishing unconditionally would create ClickUp pages on every local save during development. `mkdocs gh-deploy` also runs through this gate, so `PUBLISH_TO_CLICKUP=1 mkdocs gh-deploy` publishes to ClickUp in addition to deploying to GitHub Pages.
+
+### Known limitations (v1)
+
+- **Every publish always creates new pages.** There is no update-in-place and no persisted mapping between MkDocs pages and ClickUp pages — running the same build twice creates two separate pages in ClickUp. This is a deliberate, accepted limitation of this first version, not a bug.
+- **Pages are flat.** All pages are created directly under the configured Doc, with no nesting — the MkDocs navigation hierarchy is not reflected in ClickUp.
+- **Links are published as-authored.** Relative links between pages are not rewritten in any way; they are not resolved against ClickUp's own addressing model.
+- **Every page MkDocs builds is published** — there's no page-selection or filtering configuration yet.
 
 ## ClickUp API research
 
