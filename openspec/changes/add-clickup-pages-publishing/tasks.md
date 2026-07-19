@@ -33,7 +33,7 @@
 
 ## 6. Manual verification (real ClickUp, not mocked)
 
-- [ ] 6.1 Build a minimal throwaway MkDocs site using the plugin against a real ClickUp test/sandbox Workspace and Doc, with a real `CLICKUP_API_TOKEN` and `PUBLISH_TO_CLICKUP=1 mkdocs build`
-- [ ] 6.2 Confirm the page(s) actually appear in ClickUp, with content correctly rendered from Markdown and no unexpected formatting artifacts
-- [ ] 6.3 Confirm no `parent_page_id`/nesting — pages appear flat, directly under the Doc
-- [ ] 6.4 Run the same build a second time and confirm two separate pages are created (validates the known duplicate-on-rebuild behavior is real, not just asserted by mocked tests)
+- [x] 6.1 Build a minimal throwaway MkDocs site using the plugin against a real ClickUp test/sandbox Workspace and Doc, with a real `CLICKUP_API_TOKEN` and `PUBLISH_TO_CLICKUP=1 mkdocs build`
+- [x] 6.2 Confirm the page(s) actually appear in ClickUp, with content correctly rendered from Markdown and no unexpected formatting artifacts — confirmed, with one caveat: ClickUp normalizes/strips relative Markdown links it can't resolve to a known target on ingestion (see README note)
+- [x] 6.3 Confirm no `parent_page_id`/nesting — pages appear flat, directly under the Doc
+- [x] 6.4 Run the same build a second time and confirm two separate pages are created (validates the known duplicate-on-rebuild behavior is real, not just asserted by mocked tests)

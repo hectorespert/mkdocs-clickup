@@ -37,7 +37,7 @@ Without `PUBLISH_TO_CLICKUP` set, the plugin does nothing — `mkdocs build`, `m
 
 - **Every publish always creates new pages.** There is no update-in-place and no persisted mapping between MkDocs pages and ClickUp pages — running the same build twice creates two separate pages in ClickUp. This is a deliberate, accepted limitation of this first version, not a bug.
 - **Pages are flat.** All pages are created directly under the configured Doc, with no nesting — the MkDocs navigation hierarchy is not reflected in ClickUp.
-- **Links are published as-authored.** Relative links between pages are not rewritten in any way; they are not resolved against ClickUp's own addressing model.
+- **Links are published as-authored.** Relative links between pages are not rewritten in any way; they are not resolved against ClickUp's own addressing model. Confirmed against a real ClickUp workspace: ClickUp itself parses submitted Markdown into its own document model on ingestion, and a relative link pointing at a target it can't resolve (e.g. `other.md`) is normalized away, keeping only the link's text — this is ClickUp's own behavior, not something the plugin does.
 - **Every page MkDocs builds is published** — there's no page-selection or filtering configuration yet.
 
 ## ClickUp API research
