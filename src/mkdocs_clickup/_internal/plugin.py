@@ -109,13 +109,17 @@ class MkdocsClickUpPlugin(BasePlugin[_PluginConfig]):
         headers = {"Authorization": token}
 
         with httpx.Client() as client:
+            existing_pages = _fetch_existing_pages(client, url, headers)
+            page_by_sub_title = {page["sub_title"]: page for page in existing_pages if page.get("sub_title")}
+
             for src_uri, (title, markdown) in self._md_pages.items():
+                matched = page_by_sub_title.get(src_uri)
+                body = {"name": title, "content": markdown, "content_format": "text/md", "sub_title": src_uri}
                 try:
-                    response = client.post(
-                        url,
-                        headers=headers,
-                        json={"name": title, "content": markdown, "content_format": "text/md"},
-                    )
+                    if matched:
+                        response = client.put(f"{url}/{matched['id']}", headers=headers, json=body)
+                    else:
+                        response = client.post(url, headers=headers, json=body)
                     response.raise_for_status()
                 except httpx.HTTPStatusError as error:
                     raise PluginError(
@@ -125,6 +129,65 @@ class MkdocsClickUpPlugin(BasePlugin[_PluginConfig]):
                 except httpx.HTTPError as error:
                     raise PluginError(f"Failed to publish page '{src_uri}' to ClickUp: {error}") from error
                 _logger.debug(f"Published page '{src_uri}' to ClickUp")
+
+            current_src_uris = set(self._md_pages)
+            for page in existing_pages:
+                sub_title = page.get("sub_title")
+                if sub_title and sub_title not in current_src_uris:
+                    _archive_orphaned_page(client, url, headers, page)
+
+
+def _fetch_existing_pages(client: httpx.Client, url: str, headers: dict[str, str]) -> list[dict[str, Any]]:
+    """Fetch every page currently in the configured ClickUp Doc.
+
+    Parameters:
+        client: The HTTP client to use.
+        url: The ClickUp Doc's pages endpoint.
+        headers: Request headers, including auth.
+
+    Returns:
+        The existing page objects, as returned by ClickUp.
+    """
+    try:
+        response = client.get(url, headers=headers)
+        response.raise_for_status()
+    except httpx.HTTPStatusError as error:
+        raise PluginError(
+            f"Failed to fetch existing ClickUp pages: {error.response.status_code} {error.response.text}",
+        ) from error
+    except httpx.HTTPError as error:
+        raise PluginError(f"Failed to fetch existing ClickUp pages: {error}") from error
+    return list(response.json())
+
+
+def _archive_orphaned_page(
+    client: httpx.Client,
+    url: str,
+    headers: dict[str, str],
+    page: dict[str, Any],
+) -> None:
+    """Best-effort archive a ClickUp page whose MkDocs source no longer exists.
+
+    `archived` isn't part of ClickUp's documented Edit Page schema (only `name`, `sub_title`,
+    `content`, `content_edit_mode`, and `content_format` are documented), though it was verified
+    empirically to remove a page from subsequent listings. Because it's undocumented, a failure
+    here is logged and never fails the build - an orphan simply stays visible, same as before.
+    """
+    page_id = page["id"]
+    src_uri = page.get("sub_title")
+    body = {
+        "name": page.get("name", ""),
+        "content": page.get("content", ""),
+        "content_format": "text/md",
+        "archived": True,
+    }
+    try:
+        response = client.put(f"{url}/{page_id}", headers=headers, json=body)
+        response.raise_for_status()
+    except httpx.HTTPError as error:
+        _logger.warning(f"Could not archive orphaned ClickUp page for '{src_uri}' (page_id={page_id}): {error}")
+    else:
+        _logger.debug(f"Archived orphaned ClickUp page for '{src_uri}' (page_id={page_id})")
 
 
 def _language_callback(tag: Tag) -> str:
