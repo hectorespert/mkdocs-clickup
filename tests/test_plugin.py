@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -12,7 +13,12 @@ import pytest
 from mkdocs.commands.build import build
 from mkdocs.exceptions import Abort, PluginError
 
-from mkdocs_clickup._internal.plugin import _fetch_existing_pages
+from mkdocs_clickup._internal.plugin import (
+    _MAX_ATTEMPTS,
+    _fetch_existing_pages,
+    _RetryableResponse,
+    _wait_policy,
+)
 
 if TYPE_CHECKING:
     from mkdocs.config.defaults import MkDocsConfig
@@ -29,6 +35,11 @@ class FakeClickUp:
         self.pages: dict[str, dict] = {}
         self.archive_fails = False
         self._next_id = 0
+        # Scripted failures (all target non-GET requests):
+        self.transient_failures = 0  # next N non-GET requests return 503 (no side effect)
+        self.rate_limit_once = False  # next non-GET returns 429 with a Retry-After header
+        self.client_error: int | None = None  # next non-GET returns this deterministic 4xx status
+        self.lost_post_once = False  # next POST commits the page but returns 503 (lost response)
 
     def seed(self, *, sub_title: str, name: str = "", content: str = "", parent_page_id: str | None = None) -> str:
         """Pre-populate an existing ClickUp page, returning its page_id."""
@@ -63,11 +74,29 @@ class FakeClickUp:
 
         body = json.loads(request.content)
 
+        # Scripted deterministic client error: consumed once, no retry expected.
+        if self.client_error is not None:
+            status, self.client_error = self.client_error, None
+            return httpx.Response(status, text="client error")
+        # Scripted rate limit: 429 with a Retry-After header, consumed once.
+        if self.rate_limit_once:
+            self.rate_limit_once = False
+            return httpx.Response(429, headers={"Retry-After": "0"}, text="rate limited")
+        # Scripted transient failures: 503 with no side effect, consumed one per request.
+        if self.transient_failures > 0:
+            self.transient_failures -= 1
+            return httpx.Response(503, text="transient")
+
         if request.method == "POST":
             self._next_id += 1
             page_id = f"page-{self._next_id}"
             page = {"id": page_id, "parent_page_id": None, **body}
             self.pages[page_id] = page
+            if self.lost_post_once:
+                # The page IS created, but the response is lost - a retry must
+                # adopt it via sub_title instead of creating a duplicate.
+                self.lost_post_once = False
+                return httpx.Response(503, text="lost response")
             return httpx.Response(201, json=page)
 
         if request.method == "PUT":
@@ -95,6 +124,16 @@ def fixture_clickup(monkeypatch: pytest.MonkeyPatch) -> FakeClickUp:
     return fake
 
 
+@pytest.fixture(autouse=True)
+def _fast_retries(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make tenacity's backoff instant so retry paths don't slow the suite.
+
+    tenacity's `nap.sleep` resolves `time.sleep` at call time, so patching it
+    here neutralizes every retry wait.
+    """
+    monkeypatch.setattr(time, "sleep", lambda *_args, **_kwargs: None)
+
+
 def _base_config() -> dict:
     """Return a fresh plugin config dict (MkDocs mutates it in place during validation)."""
     return {
@@ -107,6 +146,14 @@ def _base_config() -> dict:
             },
         ],
     }
+
+
+def _config_with_repo() -> dict:
+    """Like `_base_config`, but with repo info so pages get a non-empty `edit_url`."""
+    config = _base_config()
+    config["repo_url"] = "https://github.com/hectorespert/mkdocs-clickup"
+    config["edit_uri"] = "edit/main/docs/"
+    return config
 
 
 @pytest.mark.parametrize(
@@ -416,15 +463,17 @@ def test_publish_failure_raises_and_stops(
     plugin: MkdocsClickUpPlugin = mkdocs_conf.plugins["clickup"]  # type: ignore[assignment]
     plugin.on_config(mkdocs_conf)
     plugin._md_pages = {
-        "index.md": ("Home", "# Home", None),
-        "page1.md": ("Page 1", "# Page 1", None),
+        "index.md": ("Home", "# Home", None, None),
+        "page1.md": ("Page 1", "# Page 1", None, None),
     }
 
     with pytest.raises(PluginError, match="500"):
         plugin.on_post_build(config=mkdocs_conf)
 
-    non_get_calls = [c for c in calls if c.method != "GET"]
-    assert len(non_get_calls) == 1
+    # The first page's failure aborts publishing before the second page is ever
+    # attempted (retries on the first page don't change that it stops there).
+    posted_sub_titles = {json.loads(c.content)["sub_title"] for c in calls if c.method == "POST"}
+    assert posted_sub_titles == {"index.md"}
 
 
 @pytest.mark.parametrize(
@@ -486,7 +535,10 @@ def test_page_nested_under_placeholder_anchor(
     placeholder_sub_titles = [s for s in sub_titles if s.startswith("__section__:")]
     assert len(placeholder_sub_titles) == 1
     placeholder_body = next(body for body in creates if body["sub_title"] == placeholder_sub_titles[0])
-    assert placeholder_body["content"] == ""
+    # A placeholder is no longer empty: it carries the do-not-edit notice, without an edit link.
+    assert placeholder_body["content"].startswith("> ")
+    assert "Do not edit here" in placeholder_body["content"]
+    assert "Edit the source" not in placeholder_body["content"]
     placeholder_id = next(p["id"] for p in clickup.pages.values() if p["sub_title"] == placeholder_sub_titles[0])
     a_body = next(body for body in creates if body["sub_title"] == "topics/a.md")
     b_body = next(body for body in creates if body["sub_title"] == "topics/b.md")
@@ -623,3 +675,204 @@ def test_reparenting_failure_raises_and_aborts(
         build(config=mkdocs_conf)
 
     assert "Failed to publish page 'topics/a.md' to ClickUp: 500" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "mkdocs_conf",
+    [{"config": _base_config(), "pages": {"index.md": "# Hello"}}],
+    indirect=["mkdocs_conf"],
+)
+def test_transient_failures_are_retried_then_succeed(
+    mkdocs_conf: MkDocsConfig,
+    clickup: FakeClickUp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Transient 5xx responses are retried until a later attempt succeeds; no build abort."""
+    clickup.transient_failures = 2  # first two create attempts fail, third succeeds
+    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
+    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
+
+    build(config=mkdocs_conf)  # must not raise
+
+    posts = [r for r in clickup.requests if r.method == "POST"]
+    assert len(posts) == 3
+    published = [p for p in clickup.pages.values() if p["sub_title"] == "index.md"]
+    assert len(published) == 1
+
+
+def test_wait_policy_honors_retry_after() -> None:
+    """The wait policy returns the Retry-After duration for a rate-limited response."""
+
+    class _Outcome:
+        def __init__(self, exception: BaseException) -> None:
+            self._exception = exception
+
+        def exception(self) -> BaseException:
+            return self._exception
+
+    class _State:
+        def __init__(self, exception: BaseException) -> None:
+            self.outcome = _Outcome(exception)
+            self.attempt_number = 1
+
+    retryable = _RetryableResponse(httpx.Response(429, headers={"Retry-After": "9"}))
+    assert retryable.retry_after == 9.0
+    assert _wait_policy(_State(retryable)) == 9.0
+
+    # Without Retry-After it falls back to bounded exponential backoff.
+    no_header = _RetryableResponse(httpx.Response(503))
+    assert no_header.retry_after is None
+    fallback = _wait_policy(_State(no_header))
+    assert 0.0 <= fallback <= 30.0
+
+
+@pytest.mark.parametrize(
+    "mkdocs_conf",
+    [{"config": _base_config(), "pages": {"index.md": "# Hello"}}],
+    indirect=["mkdocs_conf"],
+)
+def test_deterministic_client_error_is_not_retried(
+    mkdocs_conf: MkDocsConfig,
+    clickup: FakeClickUp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-429 4xx response surfaces immediately without any retries."""
+    clickup.client_error = 400
+    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
+    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
+
+    with pytest.raises(Abort):
+        build(config=mkdocs_conf)
+
+    posts = [r for r in clickup.requests if r.method == "POST"]
+    assert len(posts) == 1  # no retry on a deterministic client error
+
+
+@pytest.mark.parametrize(
+    "mkdocs_conf",
+    [{"config": _base_config(), "pages": {"index.md": "# Hello"}}],
+    indirect=["mkdocs_conf"],
+)
+def test_retries_exhausted_aborts_build(
+    mkdocs_conf: MkDocsConfig,
+    clickup: FakeClickUp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When every attempt fails transiently, the build aborts after exactly _MAX_ATTEMPTS tries."""
+    clickup.transient_failures = 999  # never recovers
+    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
+    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
+
+    with pytest.raises(Abort):
+        build(config=mkdocs_conf)
+
+    posts = [r for r in clickup.requests if r.method == "POST"]
+    assert len(posts) == _MAX_ATTEMPTS
+
+
+@pytest.mark.parametrize(
+    "mkdocs_conf",
+    [{"config": _base_config(), "pages": {"index.md": "# Hello"}}],
+    indirect=["mkdocs_conf"],
+)
+def test_lost_post_response_is_adopted_without_duplicate(
+    mkdocs_conf: MkDocsConfig,
+    clickup: FakeClickUp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A POST whose response is lost after the page was created is adopted, not duplicated."""
+    clickup.lost_post_once = True  # first POST commits the page but returns 503
+    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
+    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
+
+    build(config=mkdocs_conf)  # must not raise
+
+    posts = [r for r in clickup.requests if r.method == "POST"]
+    assert len(posts) == 1  # the retry adopts via re-fetch instead of re-POSTing
+    published = [p for p in clickup.pages.values() if p["sub_title"] == "index.md"]
+    assert len(published) == 1  # no duplicate
+
+
+@pytest.mark.parametrize(
+    "mkdocs_conf",
+    [{"config": _base_config(), "pages": {"index.md": "# Hello"}}],
+    indirect=["mkdocs_conf"],
+)
+def test_notice_is_prepended_to_content(
+    mkdocs_conf: MkDocsConfig,
+    clickup: FakeClickUp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every published page begins with the do-not-edit notice, then its own Markdown."""
+    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
+    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
+    build(config=mkdocs_conf)
+
+    body = next(json.loads(r.content) for r in clickup.requests if r.method == "POST")
+    content = body["content"]
+    assert content.startswith("> ")
+    assert "Do not edit here" in content
+    # the notice comes before the page's own content
+    assert content.index("Do not edit here") < content.index("# Hello")
+
+
+@pytest.mark.parametrize(
+    "mkdocs_conf",
+    [{"config": _config_with_repo(), "pages": {"index.md": "# Hello"}}],
+    indirect=["mkdocs_conf"],
+)
+def test_notice_links_to_source_when_edit_url_available(
+    mkdocs_conf: MkDocsConfig,
+    clickup: FakeClickUp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With repo_url/edit_uri configured, the notice links to the page's source."""
+    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
+    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
+    build(config=mkdocs_conf)
+
+    body = next(json.loads(r.content) for r in clickup.requests if r.method == "POST")
+    content = body["content"]
+    assert "[Edit the source](" in content
+    assert "github.com/hectorespert/mkdocs-clickup" in content
+    assert "index.md" in content[: content.index("# Hello")]
+
+
+@pytest.mark.parametrize(
+    "mkdocs_conf",
+    [{"config": _base_config(), "pages": {"index.md": "# Hello"}}],
+    indirect=["mkdocs_conf"],
+)
+def test_notice_has_no_link_without_edit_url(
+    mkdocs_conf: MkDocsConfig,
+    clickup: FakeClickUp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without repo configuration a page has no edit URL, so the notice carries no link."""
+    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
+    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
+    build(config=mkdocs_conf)
+
+    body = next(json.loads(r.content) for r in clickup.requests if r.method == "POST")
+    assert "Do not edit here" in body["content"]
+    assert "Edit the source" not in body["content"]
+
+
+@pytest.mark.parametrize(
+    "mkdocs_conf",
+    [{"config": _base_config(), "pages": {"index.md": "# Hello"}}],
+    indirect=["mkdocs_conf"],
+)
+def test_notice_does_not_accumulate_on_rebuild(
+    mkdocs_conf: MkDocsConfig,
+    clickup: FakeClickUp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The notice appears exactly once even after multiple builds (content is overwritten)."""
+    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
+    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
+    build(config=mkdocs_conf)
+    build(config=mkdocs_conf)
+
+    update = next(json.loads(r.content) for r in clickup.requests if r.method == "PUT")
+    assert update["content"].count("Auto-generated from code") == 1

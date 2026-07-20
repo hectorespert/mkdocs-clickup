@@ -16,6 +16,7 @@ from mkdocs.config.defaults import MkDocsConfig
 from mkdocs.exceptions import PluginError
 from mkdocs.plugins import BasePlugin
 from mkdocs.structure.pages import Page
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_random_exponential
 
 from mkdocs_clickup._internal.config import _PluginConfig
 from mkdocs_clickup._internal.logger import _get_logger
@@ -48,7 +49,7 @@ class MkdocsClickUpPlugin(BasePlugin[_PluginConfig]):
     for more information about its plugin system.
     """
 
-    _md_pages: dict[str, tuple[str, str, Section | None]]
+    _md_pages: dict[str, tuple[str, str, Section | None, str | None]]
 
     def on_config(self, config: MkDocsConfig) -> MkDocsConfig | None:
         """Reset the per-build page cache.
@@ -80,7 +81,7 @@ class MkdocsClickUpPlugin(BasePlugin[_PluginConfig]):
             path=page.file.dest_uri,
         )
         title = page.title if page.title is not None else page.file.src_uri
-        self._md_pages[page.file.src_uri] = (str(title), page_md, page.parent)
+        self._md_pages[page.file.src_uri] = (str(title), page_md, page.parent, page.edit_url)
 
         return html
 
@@ -110,7 +111,7 @@ class MkdocsClickUpPlugin(BasePlugin[_PluginConfig]):
         )
         headers = {"Authorization": token}
 
-        with httpx.Client() as client:
+        with httpx.Client(timeout=_TIMEOUT) as client:
             existing_pages = _fetch_existing_pages(client, url, headers)
             page_by_sub_title = {page["sub_title"]: page for page in existing_pages if page.get("sub_title")}
 
@@ -122,6 +123,154 @@ class MkdocsClickUpPlugin(BasePlugin[_PluginConfig]):
                 sub_title = page.get("sub_title")
                 if sub_title and sub_title not in current_identifiers:
                     _archive_orphaned_page(client, url, headers, page)
+
+
+_TIMEOUT = httpx.Timeout(30.0)
+"""Explicit per-request timeout, well above httpx's 5s default, so a slow (but not failed) ClickUp response isn't prematurely treated as a failure."""
+
+_MAX_ATTEMPTS = 5
+"""Total attempts per request (1 initial + 4 retries) before giving up."""
+
+_RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+"""Response statuses treated as transient and retried; other 4xx are deterministic and surface immediately."""
+
+
+class _RetryableResponse(Exception):  # noqa: N818
+    """Wraps a response with a transient status so `tenacity` can retry on it.
+
+    Not a real error condition on its own - it exists only to turn a retryable
+    HTTP *response* into something `tenacity`'s exception-based retry can see,
+    and to carry the `Retry-After` hint to the wait policy.
+    """
+
+    def __init__(self, response: httpx.Response) -> None:
+        self.response = response
+        super().__init__(f"Retryable ClickUp response: {response.status_code}")
+
+    @property
+    def retry_after(self) -> float | None:
+        """The `Retry-After` header as seconds, if present and integer-valued."""
+        value = self.response.headers.get("Retry-After")
+        if value is not None and value.strip().isdigit():
+            return float(value.strip())
+        return None
+
+
+_exponential_wait = wait_random_exponential(multiplier=1, max=30)
+"""Jittered exponential backoff, capped at 30s, used when no `Retry-After` applies."""
+
+
+def _wait_policy(retry_state: Any) -> float:
+    """Honor a `429`'s `Retry-After`, else fall back to jittered exponential backoff."""
+    outcome = retry_state.outcome
+    exception = outcome.exception() if outcome is not None else None
+    if isinstance(exception, _RetryableResponse) and exception.retry_after is not None:
+        return exception.retry_after
+    return _exponential_wait(retry_state)
+
+
+_retry_transient = retry(
+    stop=stop_after_attempt(_MAX_ATTEMPTS),
+    wait=_wait_policy,
+    retry=retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError, _RetryableResponse)),
+    reraise=True,
+)
+"""Shared `tenacity` policy: retry transient transport errors and retryable statuses."""
+
+
+@_retry_transient
+def _send(client: httpx.Client, method: str, url: str, **kwargs: Any) -> httpx.Response:
+    """Send one request, raising `_RetryableResponse` for transient statuses so the policy retries."""
+    response = client.request(method, url, **kwargs)
+    if response.status_code in _RETRYABLE_STATUS:
+        raise _RetryableResponse(response)
+    return response
+
+
+def _request_with_retry(client: httpx.Client, method: str, url: str, **kwargs: Any) -> httpx.Response:
+    """Send a request with retries, returning the final response (even if its status is an error).
+
+    Transport errors (timeouts, connection failures) propagate after the retries
+    are exhausted; a retryable *status* that never recovered is handed back as a
+    normal response so the caller's `raise_for_status()` produces the usual error.
+
+    Parameters:
+        client: The HTTP client to use.
+        method: The HTTP method.
+        url: The request URL.
+        **kwargs: Extra arguments forwarded to the client (e.g. `headers`, `json`).
+
+    Returns:
+        The final HTTP response.
+    """
+    try:
+        return _send(client, method, url, **kwargs)
+    except _RetryableResponse as exhausted:
+        return exhausted.response
+
+
+def _find_page_by_sub_title(
+    client: httpx.Client,
+    url: str,
+    headers: dict[str, str],
+    sub_title: str,
+) -> dict[str, Any] | None:
+    """Re-fetch the Doc's pages and return the one with the given `sub_title`, if any."""
+    response = _request_with_retry(client, "GET", url, headers=headers)
+    response.raise_for_status()
+    for page in _flatten_pages(response.json()):
+        if page.get("sub_title") == sub_title:
+            return page
+    return None
+
+
+def _create_page(
+    client: httpx.Client,
+    url: str,
+    headers: dict[str, str],
+    sub_title: str,
+    body: dict[str, Any],
+) -> str:
+    """Create a page with duplicate-safe retries, returning its ClickUp `page_id`.
+
+    Creating a page (POST) is not idempotent: if ClickUp commits the create but
+    the response is lost, a blind retry would make a second page with the same
+    `sub_title`. So on every attempt after the first, re-fetch the Doc first and,
+    if a page with this `sub_title` already exists, adopt it instead of re-POSTing.
+
+    Parameters:
+        client: The HTTP client to use.
+        url: The ClickUp Doc's pages endpoint.
+        headers: Request headers, including auth.
+        sub_title: The page's `sub_title` (its MkDocs `src_uri`), used to detect an already-created page.
+        body: The create request body.
+
+    Returns:
+        The created (or adopted) page's `page_id`.
+    """
+    posted = False
+
+    @_retry_transient
+    def _attempt() -> httpx.Response | dict[str, Any]:
+        nonlocal posted
+        if posted:
+            existing = _find_page_by_sub_title(client, url, headers, sub_title)
+            if existing is not None:
+                return existing
+        posted = True
+        response = client.post(url, headers=headers, json=body)
+        if response.status_code in _RETRYABLE_STATUS:
+            raise _RetryableResponse(response)
+        return response
+
+    try:
+        result: httpx.Response | dict[str, Any] = _attempt()
+    except _RetryableResponse as exhausted:
+        result = exhausted.response
+    if isinstance(result, dict):  # adopted an already-created page
+        return result["id"]
+    result.raise_for_status()
+    return result.json()["id"]
 
 
 def _fetch_existing_pages(client: httpx.Client, url: str, headers: dict[str, str]) -> list[dict[str, Any]]:
@@ -137,7 +286,7 @@ def _fetch_existing_pages(client: httpx.Client, url: str, headers: dict[str, str
         list regardless of nesting depth.
     """
     try:
-        response = client.get(url, headers=headers)
+        response = _request_with_retry(client, "GET", url, headers=headers)
         response.raise_for_status()
     except httpx.HTTPStatusError as error:
         raise PluginError(
@@ -214,22 +363,52 @@ def _placeholder_sub_title(section: Any) -> str:
     return f"{_PLACEHOLDER_SUB_TITLE_PREFIX}{_section_breadcrumb(section)}"
 
 
+_NOTICE_TEXT = (
+    "⚠️ **Auto-generated from code. Do not edit here.** "
+    "Changes made in ClickUp are overwritten on the next publish."
+)
+"""Fixed do-not-edit notice reinforcing that the source repository, not ClickUp, is the source of truth."""
+
+
+def _notice(edit_url: str | None) -> str:
+    """Render the do-not-edit notice as a Markdown blockquote.
+
+    Includes an "Edit the source" link when an edit URL is available, pointing
+    readers at the source file rather than ClickUp.
+
+    Parameters:
+        edit_url: The page's source edit URL, or `None` when unavailable
+            (no `repo_url`/`edit_uri`, or a section placeholder with no source).
+
+    Returns:
+        The notice as a single-line Markdown blockquote.
+    """
+    text = _NOTICE_TEXT
+    if edit_url:
+        text += f" [Edit the source]({edit_url})"
+    return f"> {text}"
+
+
 def _build_publish_units(
-    md_pages: dict[str, tuple[str, str, Section | None]],
+    md_pages: dict[str, tuple[str, str, Section | None, str | None]],
 ) -> dict[str, tuple[str, str, str | None]]:
     """Resolve every converted page and nav Section anchor into publish units.
 
     Each MkDocs `nav` Section resolves to an "anchor": a real `index.md`/
     `README.md` child page if one exists among the section's direct children,
-    otherwise a synthetic placeholder page (empty content, matched across
+    otherwise a synthetic placeholder page (notice-only content, matched across
     builds by a title-breadcrumb-derived `sub_title`). A page or placeholder's
     `parent_page_id` is the anchor of its own containing Section - except a
     page that *is* its Section's own anchor, which is parented to the
     Section's parent's anchor instead, to avoid a page being its own parent.
 
+    Every unit's content is prefixed with the do-not-edit notice (see `_notice`),
+    linking to the page's source when an edit URL is available.
+
     Parameters:
-        md_pages: Mapping of `src_uri` to `(title, markdown, section)`, where
-            `section` is the page's nav parent (`None` for a top-level page).
+        md_pages: Mapping of `src_uri` to `(title, markdown, section, edit_url)`,
+            where `section` is the page's nav parent (`None` for a top-level
+            page) and `edit_url` is the page's source edit URL (`None` if none).
 
     Returns:
         Mapping of identifier (a page's `src_uri`, or a placeholder's synthetic
@@ -251,17 +430,17 @@ def _build_publish_units(
         placeholder_key = _placeholder_sub_title(section)
         anchor_of[section] = placeholder_key
         parent_key = anchor(section.parent)
-        units[placeholder_key] = (section.title, "", parent_key)
+        units[placeholder_key] = (section.title, _notice(None), parent_key)
         return placeholder_key
 
-    for src_uri, (title, markdown, section) in md_pages.items():
+    for src_uri, (title, markdown, section, edit_url) in md_pages.items():
         if section is None:
             parent_key = None
         elif anchor(section) == src_uri:
             parent_key = anchor(section.parent)
         else:
             parent_key = anchor(section)
-        units[src_uri] = (title, markdown, parent_key)
+        units[src_uri] = (title, f"{_notice(edit_url)}\n\n{markdown}", parent_key)
 
     return units
 
@@ -297,10 +476,11 @@ def _publish_units(
             body["parent_page_id"] = None
         try:
             if matched:
-                response = client.put(f"{url}/{matched['id']}", headers=headers, json=body)
+                response = _request_with_retry(client, "PUT", f"{url}/{matched['id']}", headers=headers, json=body)
+                response.raise_for_status()
+                page_id = matched["id"]
             else:
-                response = client.post(url, headers=headers, json=body)
-            response.raise_for_status()
+                page_id = _create_page(client, url, headers, key, body)
         except httpx.HTTPStatusError as error:
             raise PluginError(
                 f"Failed to publish page '{key}' to ClickUp: {error.response.status_code} {error.response.text}",
@@ -308,7 +488,6 @@ def _publish_units(
         except httpx.HTTPError as error:
             raise PluginError(f"Failed to publish page '{key}' to ClickUp: {error}") from error
         _logger.debug(f"Published page '{key}' to ClickUp")
-        page_id = matched["id"] if matched else response.json()["id"]
         published_ids[key] = page_id
         return page_id
 
@@ -338,7 +517,7 @@ def _archive_orphaned_page(
         "archived": True,
     }
     try:
-        response = client.put(f"{url}/{page_id}", headers=headers, json=body)
+        response = _request_with_retry(client, "PUT", f"{url}/{page_id}", headers=headers, json=body)
         response.raise_for_status()
     except httpx.HTTPError as error:
         _logger.warning(f"Could not archive orphaned ClickUp page for '{src_uri}' (page_id={page_id}): {error}")
