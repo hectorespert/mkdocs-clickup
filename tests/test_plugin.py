@@ -148,6 +148,14 @@ def _base_config() -> dict:
     }
 
 
+def _config_with_repo() -> dict:
+    """Like `_base_config`, but with repo info so pages get a non-empty `edit_url`."""
+    config = _base_config()
+    config["repo_url"] = "https://github.com/hectorespert/mkdocs-clickup"
+    config["edit_uri"] = "edit/main/docs/"
+    return config
+
+
 @pytest.mark.parametrize(
     "mkdocs_conf",
     [{"config": _base_config(), "pages": {"index.md": "# Hello"}}],
@@ -455,8 +463,8 @@ def test_publish_failure_raises_and_stops(
     plugin: MkdocsClickUpPlugin = mkdocs_conf.plugins["clickup"]  # type: ignore[assignment]
     plugin.on_config(mkdocs_conf)
     plugin._md_pages = {
-        "index.md": ("Home", "# Home", None),
-        "page1.md": ("Page 1", "# Page 1", None),
+        "index.md": ("Home", "# Home", None, None),
+        "page1.md": ("Page 1", "# Page 1", None, None),
     }
 
     with pytest.raises(PluginError, match="500"):
@@ -527,7 +535,10 @@ def test_page_nested_under_placeholder_anchor(
     placeholder_sub_titles = [s for s in sub_titles if s.startswith("__section__:")]
     assert len(placeholder_sub_titles) == 1
     placeholder_body = next(body for body in creates if body["sub_title"] == placeholder_sub_titles[0])
-    assert placeholder_body["content"] == ""
+    # A placeholder is no longer empty: it carries the do-not-edit notice, without an edit link.
+    assert placeholder_body["content"].startswith("> ")
+    assert "Do not edit here" in placeholder_body["content"]
+    assert "Edit the source" not in placeholder_body["content"]
     placeholder_id = next(p["id"] for p in clickup.pages.values() if p["sub_title"] == placeholder_sub_titles[0])
     a_body = next(body for body in creates if body["sub_title"] == "topics/a.md")
     b_body = next(body for body in creates if body["sub_title"] == "topics/b.md")
@@ -780,3 +791,88 @@ def test_lost_post_response_is_adopted_without_duplicate(
     assert len(posts) == 1  # the retry adopts via re-fetch instead of re-POSTing
     published = [p for p in clickup.pages.values() if p["sub_title"] == "index.md"]
     assert len(published) == 1  # no duplicate
+
+
+@pytest.mark.parametrize(
+    "mkdocs_conf",
+    [{"config": _base_config(), "pages": {"index.md": "# Hello"}}],
+    indirect=["mkdocs_conf"],
+)
+def test_notice_is_prepended_to_content(
+    mkdocs_conf: MkDocsConfig,
+    clickup: FakeClickUp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every published page begins with the do-not-edit notice, then its own Markdown."""
+    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
+    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
+    build(config=mkdocs_conf)
+
+    body = next(json.loads(r.content) for r in clickup.requests if r.method == "POST")
+    content = body["content"]
+    assert content.startswith("> ")
+    assert "Do not edit here" in content
+    # the notice comes before the page's own content
+    assert content.index("Do not edit here") < content.index("# Hello")
+
+
+@pytest.mark.parametrize(
+    "mkdocs_conf",
+    [{"config": _config_with_repo(), "pages": {"index.md": "# Hello"}}],
+    indirect=["mkdocs_conf"],
+)
+def test_notice_links_to_source_when_edit_url_available(
+    mkdocs_conf: MkDocsConfig,
+    clickup: FakeClickUp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With repo_url/edit_uri configured, the notice links to the page's source."""
+    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
+    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
+    build(config=mkdocs_conf)
+
+    body = next(json.loads(r.content) for r in clickup.requests if r.method == "POST")
+    content = body["content"]
+    assert "[Edit the source](" in content
+    assert "github.com/hectorespert/mkdocs-clickup" in content
+    assert "index.md" in content[: content.index("# Hello")]
+
+
+@pytest.mark.parametrize(
+    "mkdocs_conf",
+    [{"config": _base_config(), "pages": {"index.md": "# Hello"}}],
+    indirect=["mkdocs_conf"],
+)
+def test_notice_has_no_link_without_edit_url(
+    mkdocs_conf: MkDocsConfig,
+    clickup: FakeClickUp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without repo configuration a page has no edit URL, so the notice carries no link."""
+    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
+    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
+    build(config=mkdocs_conf)
+
+    body = next(json.loads(r.content) for r in clickup.requests if r.method == "POST")
+    assert "Do not edit here" in body["content"]
+    assert "Edit the source" not in body["content"]
+
+
+@pytest.mark.parametrize(
+    "mkdocs_conf",
+    [{"config": _base_config(), "pages": {"index.md": "# Hello"}}],
+    indirect=["mkdocs_conf"],
+)
+def test_notice_does_not_accumulate_on_rebuild(
+    mkdocs_conf: MkDocsConfig,
+    clickup: FakeClickUp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The notice appears exactly once even after multiple builds (content is overwritten)."""
+    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
+    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
+    build(config=mkdocs_conf)
+    build(config=mkdocs_conf)
+
+    update = next(json.loads(r.content) for r in clickup.requests if r.method == "PUT")
+    assert update["content"].count("Auto-generated from code") == 1

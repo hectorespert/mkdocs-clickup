@@ -49,7 +49,7 @@ class MkdocsClickUpPlugin(BasePlugin[_PluginConfig]):
     for more information about its plugin system.
     """
 
-    _md_pages: dict[str, tuple[str, str, Section | None]]
+    _md_pages: dict[str, tuple[str, str, Section | None, str | None]]
 
     def on_config(self, config: MkDocsConfig) -> MkDocsConfig | None:
         """Reset the per-build page cache.
@@ -81,7 +81,7 @@ class MkdocsClickUpPlugin(BasePlugin[_PluginConfig]):
             path=page.file.dest_uri,
         )
         title = page.title if page.title is not None else page.file.src_uri
-        self._md_pages[page.file.src_uri] = (str(title), page_md, page.parent)
+        self._md_pages[page.file.src_uri] = (str(title), page_md, page.parent, page.edit_url)
 
         return html
 
@@ -363,22 +363,52 @@ def _placeholder_sub_title(section: Any) -> str:
     return f"{_PLACEHOLDER_SUB_TITLE_PREFIX}{_section_breadcrumb(section)}"
 
 
+_NOTICE_TEXT = (
+    "⚠️ **Auto-generated from code. Do not edit here.** "
+    "Changes made in ClickUp are overwritten on the next publish."
+)
+"""Fixed do-not-edit notice reinforcing that the source repository, not ClickUp, is the source of truth."""
+
+
+def _notice(edit_url: str | None) -> str:
+    """Render the do-not-edit notice as a Markdown blockquote.
+
+    Includes an "Edit the source" link when an edit URL is available, pointing
+    readers at the source file rather than ClickUp.
+
+    Parameters:
+        edit_url: The page's source edit URL, or `None` when unavailable
+            (no `repo_url`/`edit_uri`, or a section placeholder with no source).
+
+    Returns:
+        The notice as a single-line Markdown blockquote.
+    """
+    text = _NOTICE_TEXT
+    if edit_url:
+        text += f" [Edit the source]({edit_url})"
+    return f"> {text}"
+
+
 def _build_publish_units(
-    md_pages: dict[str, tuple[str, str, Section | None]],
+    md_pages: dict[str, tuple[str, str, Section | None, str | None]],
 ) -> dict[str, tuple[str, str, str | None]]:
     """Resolve every converted page and nav Section anchor into publish units.
 
     Each MkDocs `nav` Section resolves to an "anchor": a real `index.md`/
     `README.md` child page if one exists among the section's direct children,
-    otherwise a synthetic placeholder page (empty content, matched across
+    otherwise a synthetic placeholder page (notice-only content, matched across
     builds by a title-breadcrumb-derived `sub_title`). A page or placeholder's
     `parent_page_id` is the anchor of its own containing Section - except a
     page that *is* its Section's own anchor, which is parented to the
     Section's parent's anchor instead, to avoid a page being its own parent.
 
+    Every unit's content is prefixed with the do-not-edit notice (see `_notice`),
+    linking to the page's source when an edit URL is available.
+
     Parameters:
-        md_pages: Mapping of `src_uri` to `(title, markdown, section)`, where
-            `section` is the page's nav parent (`None` for a top-level page).
+        md_pages: Mapping of `src_uri` to `(title, markdown, section, edit_url)`,
+            where `section` is the page's nav parent (`None` for a top-level
+            page) and `edit_url` is the page's source edit URL (`None` if none).
 
     Returns:
         Mapping of identifier (a page's `src_uri`, or a placeholder's synthetic
@@ -400,17 +430,17 @@ def _build_publish_units(
         placeholder_key = _placeholder_sub_title(section)
         anchor_of[section] = placeholder_key
         parent_key = anchor(section.parent)
-        units[placeholder_key] = (section.title, "", parent_key)
+        units[placeholder_key] = (section.title, _notice(None), parent_key)
         return placeholder_key
 
-    for src_uri, (title, markdown, section) in md_pages.items():
+    for src_uri, (title, markdown, section, edit_url) in md_pages.items():
         if section is None:
             parent_key = None
         elif anchor(section) == src_uri:
             parent_key = anchor(section.parent)
         else:
             parent_key = anchor(section)
-        units[src_uri] = (title, markdown, parent_key)
+        units[src_uri] = (title, f"{_notice(edit_url)}\n\n{markdown}", parent_key)
 
     return units
 
