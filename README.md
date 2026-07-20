@@ -36,9 +36,45 @@ Without `PUBLISH_TO_CLICKUP` set, the plugin does nothing — `mkdocs build`, `m
 ### Known limitations
 
 - **Publishing is idempotent, keyed by page path.** Before creating or updating any page, the plugin fetches the Doc's existing pages and matches them against the current build's pages using ClickUp's `sub_title` field, which holds the MkDocs page's source path (not the page title, which MkDocs doesn't guarantee to be unique). A match is updated in place (same ClickUp page, same URL); no match is created. A previously-published page whose source file was renamed or deleted (no current match) is archived — removed from the Doc's page listing — on a best-effort basis: `archived` is not part of ClickUp's documented Edit Page API, so if archiving fails or stops working, the plugin logs a warning and continues rather than failing the build; the page simply stays visible. A renamed source file is treated as delete-old (archived) + create-new, so it gets a new ClickUp page and URL rather than keeping the old one.
-- **Pages are flat.** All pages are created directly under the configured Doc, with no nesting — the MkDocs navigation hierarchy is not reflected in ClickUp.
+- **Pages mirror the MkDocs navigation hierarchy.** Each `nav` section is anchored by a real page (its direct `index.md`/`README.md` child, if it has one) or, if it has none, by an empty placeholder page created just to hold that spot in the tree — both cases use ClickUp's `parent_page_id` (undocumented in ClickUp's public API reference, like `archived`, but verified to work reliably, including re-parenting an existing page when its position in the hierarchy changes between builds). This is the default behavior; there's no configuration to keep pages flat. A flat site (no nested `nav` sections) publishes exactly as before. Sibling order within ClickUp may not match your `nav:` order — there's no documented API control over it.
 - **Links are published as-authored.** Relative links between pages are not rewritten in any way; they are not resolved against ClickUp's own addressing model. Confirmed against a real ClickUp workspace: ClickUp itself parses submitted Markdown into its own document model on ingestion, and a relative link pointing at a target it can't resolve (e.g. `other.md`) is normalized away, keeping only the link's text — this is ClickUp's own behavior, not something the plugin does.
 - **Every page MkDocs builds is published** — there's no page-selection or filtering configuration yet.
+
+## Releasing
+
+Releases are cut **locally**, driven by the `duty`-based task runner (`python scripts/make <task>`). There is no version string to bump in source: the package version is derived at build time from Git tags (`scripts/get_version.py`), falling back to the latest `CHANGELOG.md` heading. Cutting a release therefore comes down to updating the changelog, then creating and pushing a tag.
+
+**Prerequisites**
+
+- A clean working tree on `main` with push access to the repository.
+- PyPI credentials available to `twine` (e.g. an API token in `~/.pypirc`, or `TWINE_USERNAME=__token__` / `TWINE_PASSWORD=pypi-...` in the environment) — the release publishes to PyPI from your machine.
+- The docs deploy pushes to the `gh-pages` branch via `mkdocs gh-deploy`.
+
+**Steps**
+
+1. **Update the changelog** — regenerate `CHANGELOG.md` from the commit history (uses `git-changelog`, so commits must follow the Angular convention) and pick the version bump:
+
+   ```bash
+   python scripts/make changelog bump=minor   # or: major | patch | <explicit-version>
+   ```
+
+   Review the generated `CHANGELOG.md` and commit any manual touch-ups you need before releasing.
+
+2. **Release** — this single task does everything else:
+
+   ```bash
+   python scripts/make release 0.6.0
+   ```
+
+   It runs locally and, in order:
+   - stages `pyproject.toml` + `CHANGELOG.md` and commits them as `chore: Prepare release 0.6.0`;
+   - creates an annotated Git tag `0.6.0`;
+   - pushes the commit and the tag (`git push` + `git push --tags`);
+   - then, via its post-hooks, builds the source and wheel distributions (`build`), uploads them to PyPI (`publish`, `twine upload --skip-existing`), and deploys the documentation to GitHub Pages (`docs-deploy`, `mkdocs gh-deploy --force`).
+
+3. **GitHub Release (automated)** — pushing the tag triggers `.github/workflows/release.yml`, which generates release notes with `git-changelog --release-notes` and creates the corresponding GitHub Release.
+
+> Publishing the documentation to ClickUp is **not** part of the release flow yet; it is a manual, opt-in build (`PUBLISH_TO_CLICKUP=1 CLICKUP_API_TOKEN=... mkdocs build`, see [Usage](#usage)).
 
 ## ClickUp API research
 

@@ -153,3 +153,45 @@ jobs:
 
     - name: Run the test suite
       run: python scripts/make test
+
+  publish-clickup:
+
+    needs:
+    - tests
+    # Only publish the project's own docs to ClickUp on direct pushes to main
+    # (not on pull requests or test-me-* branches) — this exercises the plugin
+    # end-to-end against a real ClickUp Doc.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        fetch-tags: true
+
+    - name: Set up Pandoc
+      uses: r-lib/actions/setup-pandoc@v2
+
+    - name: Setup Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: "3.13"
+
+    - name: Setup uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        enable-cache: true
+        cache-dependency-glob: pyproject.toml
+
+    - name: Install dependencies
+      run: python scripts/make setup
+
+    - name: Publish documentation to ClickUp
+      env:
+        PUBLISH_TO_CLICKUP: "1"
+        CLICKUP_API_TOKEN: ${{ secrets.CLICKUP_API_TOKEN }}
+      run: |
+        mkdir -p htmlcov && touch htmlcov/index.html
+        python scripts/make run mkdocs build
