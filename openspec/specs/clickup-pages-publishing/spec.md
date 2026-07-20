@@ -146,6 +146,32 @@ Markdown content published to ClickUp SHALL preserve relative links exactly as t
 - **WHEN** a MkDocs page contains a relative link to another page
 - **THEN** the Markdown content sent to ClickUp for that page SHALL contain that same relative link, unmodified
 
+### Requirement: Every published page carries a do-not-edit notice
+The plugin SHALL prepend a fixed do-not-edit notice to the Markdown content of every page it publishes, including section placeholder anchors. The notice SHALL make clear that the page is auto-generated from the source repository and that edits made in ClickUp are overwritten on the next publish. Because the plugin overwrites each page's content in full on every publish, the notice SHALL be regenerated each build and SHALL NOT accumulate across builds. The notice is fixed; there is no configuration to change or disable it.
+
+#### Scenario: A published page begins with the notice
+- **WHEN** the plugin publishes (creates or updates) a page
+- **THEN** the content sent to ClickUp SHALL begin with the do-not-edit notice, followed by the page's own generated Markdown
+
+#### Scenario: Placeholder anchors also carry the notice
+- **WHEN** the plugin publishes a section placeholder anchor
+- **THEN** its content SHALL be the do-not-edit notice (the placeholder is no longer empty)
+
+#### Scenario: The notice does not accumulate on rebuild
+- **WHEN** the same page is published across two builds
+- **THEN** its content SHALL contain the notice exactly once, not once per build
+
+### Requirement: The notice links to the source when an edit URL is available
+When a published page has an edit URL (as computed by MkDocs from the site's `repo_url` and `edit_uri` and the page's source path), the plugin SHALL include a link to that source in the notice, so readers are directed to edit the source rather than ClickUp. When no edit URL is available — the site has no `repo_url`/`edit_uri`, or the page is a section placeholder with no source file — the plugin SHALL emit the notice without a link.
+
+#### Scenario: Page with an edit URL
+- **WHEN** a published page has a non-empty edit URL
+- **THEN** its notice SHALL include a link to that edit URL
+
+#### Scenario: Page or placeholder without an edit URL
+- **WHEN** a published page has no edit URL (no repo configuration, or a placeholder anchor)
+- **THEN** its notice SHALL be published without a source link, and publishing SHALL proceed normally
+
 ### Requirement: Transient ClickUp failures are retried before failing
 The plugin SHALL retry a ClickUp API request that fails transiently, rather than aborting on the first failure. A failure is transient when it is a connection error, a read/connect timeout, or a response with status `429`, `500`, `502`, `503`, or `504`. The plugin SHALL make up to 5 total attempts (1 initial plus 4 retries) per request, waiting between attempts with exponential backoff plus jitter. This applies to every ClickUp call the plugin makes: fetching existing pages (GET), creating pages (POST), updating pages (PUT), and archiving orphaned pages (PUT). Only after all attempts are exhausted does the existing "Publish failures abort the build" requirement take effect (or, for archival, the existing best-effort behavior).
 
