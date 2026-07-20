@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import httpx
 import pytest
 from mkdocs.commands.build import build
-from mkdocs.exceptions import PluginError
+from mkdocs.exceptions import Abort, PluginError
+
+from mkdocs_clickup._internal.plugin import _fetch_existing_pages
 
 if TYPE_CHECKING:
     from mkdocs.config.defaults import MkDocsConfig
@@ -26,26 +30,43 @@ class FakeClickUp:
         self.archive_fails = False
         self._next_id = 0
 
-    def seed(self, *, sub_title: str, name: str = "", content: str = "") -> str:
+    def seed(self, *, sub_title: str, name: str = "", content: str = "", parent_page_id: str | None = None) -> str:
         """Pre-populate an existing ClickUp page, returning its page_id."""
         self._next_id += 1
         page_id = f"seed-{self._next_id}"
-        self.pages[page_id] = {"id": page_id, "name": name, "sub_title": sub_title, "content": content}
+        self.pages[page_id] = {
+            "id": page_id,
+            "name": name,
+            "sub_title": sub_title,
+            "content": content,
+            "parent_page_id": parent_page_id,
+        }
         return page_id
+
+    def _tree(self) -> list[dict]:
+        """Build the nested-tree GET response: root pages, each with recursive `pages` children."""
+        children_by_parent: dict[str | None, list[dict]] = {}
+        for page in self.pages.values():
+            children_by_parent.setdefault(page.get("parent_page_id"), []).append(page)
+
+        def build_nodes(parent_id: str | None) -> list[dict]:
+            return [{**page, "pages": build_nodes(page["id"])} for page in children_by_parent.get(parent_id, [])]
+
+        return build_nodes(None)
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         """Route a captured request to fake GET/POST/PUT behavior."""
         self.requests.append(request)
 
         if request.method == "GET":
-            return httpx.Response(200, json=list(self.pages.values()))
+            return httpx.Response(200, json=self._tree())
 
         body = json.loads(request.content)
 
         if request.method == "POST":
             self._next_id += 1
             page_id = f"page-{self._next_id}"
-            page = {"id": page_id, **body}
+            page = {"id": page_id, "parent_page_id": None, **body}
             self.pages[page_id] = page
             return httpx.Response(201, json=page)
 
@@ -53,7 +74,7 @@ class FakeClickUp:
             page_id = request.url.path.rsplit("/", 1)[-1]
             if body.get("archived") and self.archive_fails:
                 return httpx.Response(500, text="archive failed")
-            page = self.pages.setdefault(page_id, {"id": page_id})
+            page = self.pages.setdefault(page_id, {"id": page_id, "parent_page_id": None})
             page.update(body)
             return httpx.Response(200, json=page)
 
@@ -395,8 +416,8 @@ def test_publish_failure_raises_and_stops(
     plugin: MkdocsClickUpPlugin = mkdocs_conf.plugins["clickup"]  # type: ignore[assignment]
     plugin.on_config(mkdocs_conf)
     plugin._md_pages = {
-        "index.md": ("Home", "# Home"),
-        "page1.md": ("Page 1", "# Page 1"),
+        "index.md": ("Home", "# Home", None),
+        "page1.md": ("Page 1", "# Page 1", None),
     }
 
     with pytest.raises(PluginError, match="500"):
@@ -404,3 +425,201 @@ def test_publish_failure_raises_and_stops(
 
     non_get_calls = [c for c in calls if c.method != "GET"]
     assert len(non_get_calls) == 1
+
+
+@pytest.mark.parametrize(
+    "mkdocs_conf",
+    [
+        {
+            "config": _base_config(),
+            "pages": {
+                "guide/index.md": "# Guide",
+                "guide/other.md": "# Other",
+            },
+        },
+    ],
+    indirect=["mkdocs_conf"],
+)
+def test_page_nested_under_real_index_anchor(
+    mkdocs_conf: MkDocsConfig,
+    clickup: FakeClickUp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A page whose section has a real index page is parented to it; no placeholder is created."""
+    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
+    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
+    build(config=mkdocs_conf)
+
+    bodies = {json.loads(r.content)["sub_title"]: json.loads(r.content) for r in clickup.requests if r.method == "POST"}
+    assert set(bodies) == {"guide/index.md", "guide/other.md"}
+    assert "parent_page_id" not in bodies["guide/index.md"]
+    index_id = next(p["id"] for p in clickup.pages.values() if p["sub_title"] == "guide/index.md")
+    assert bodies["guide/other.md"]["parent_page_id"] == index_id
+
+
+@pytest.mark.parametrize(
+    "mkdocs_conf",
+    [
+        {
+            "config": _base_config(),
+            "pages": {
+                "topics/a.md": "# A",
+                "topics/b.md": "# B",
+            },
+        },
+    ],
+    indirect=["mkdocs_conf"],
+)
+def test_page_nested_under_placeholder_anchor(
+    mkdocs_conf: MkDocsConfig,
+    clickup: FakeClickUp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A section with no index page gets an empty placeholder anchor; its pages are parented to it."""
+    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
+    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
+    build(config=mkdocs_conf)
+
+    creates = [json.loads(r.content) for r in clickup.requests if r.method == "POST"]
+    sub_titles = {body["sub_title"] for body in creates}
+    assert {"topics/a.md", "topics/b.md"}.issubset(sub_titles)
+    placeholder_sub_titles = [s for s in sub_titles if s.startswith("__section__:")]
+    assert len(placeholder_sub_titles) == 1
+    placeholder_body = next(body for body in creates if body["sub_title"] == placeholder_sub_titles[0])
+    assert placeholder_body["content"] == ""
+    placeholder_id = next(p["id"] for p in clickup.pages.values() if p["sub_title"] == placeholder_sub_titles[0])
+    a_body = next(body for body in creates if body["sub_title"] == "topics/a.md")
+    b_body = next(body for body in creates if body["sub_title"] == "topics/b.md")
+    assert a_body["parent_page_id"] == placeholder_id
+    assert b_body["parent_page_id"] == placeholder_id
+
+
+@pytest.mark.parametrize(
+    "mkdocs_conf",
+    [{"config": _base_config(), "pages": {"topics/a.md": "# A"}}],
+    indirect=["mkdocs_conf"],
+)
+def test_placeholder_is_updated_not_duplicated_on_rebuild(
+    mkdocs_conf: MkDocsConfig,
+    clickup: FakeClickUp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same section's placeholder anchor is updated, not recreated, on a second build."""
+    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
+    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
+    build(config=mkdocs_conf)
+    build(config=mkdocs_conf)
+
+    placeholder_ids = {p["id"] for p in clickup.pages.values() if p["sub_title"].startswith("__section__:")}
+    assert len(placeholder_ids) == 1
+    updates = [r for r in clickup.requests if r.method == "PUT"]
+    assert any(r.url.path.endswith(f"/{next(iter(placeholder_ids))}") for r in updates)
+
+
+def test_fetch_existing_pages_flattens_nested_tree() -> None:
+    """`_fetch_existing_pages` recursively flattens a multi-level nested response."""
+    nested = [
+        {
+            "id": "root-1",
+            "sub_title": "root.md",
+            "pages": [
+                {
+                    "id": "child-1",
+                    "sub_title": "child.md",
+                    "pages": [
+                        {"id": "grandchild-1", "sub_title": "grandchild.md"},
+                    ],
+                },
+            ],
+        },
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:  # noqa: ARG001
+        return httpx.Response(200, json=nested)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        pages = _fetch_existing_pages(client, "https://example.test/pages", {})
+
+    assert {p["id"] for p in pages} == {"root-1", "child-1", "grandchild-1"}
+
+
+@pytest.mark.parametrize(
+    "mkdocs_conf",
+    [{"config": _base_config(), "pages": {"topics/a.md": "# A"}}],
+    indirect=["mkdocs_conf"],
+)
+def test_reparented_when_section_gains_index_page(
+    mkdocs_conf: MkDocsConfig,
+    clickup: FakeClickUp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When a section gains a real index page, siblings are re-parented and the old placeholder is archived."""
+    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
+    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
+    build(config=mkdocs_conf)
+
+    placeholder = next(p for p in clickup.pages.values() if p["sub_title"].startswith("__section__:"))
+    a_page_id = next(p["id"] for p in clickup.pages.values() if p["sub_title"] == "topics/a.md")
+    assert clickup.pages[a_page_id]["parent_page_id"] == placeholder["id"]
+
+    Path(mkdocs_conf.docs_dir, "topics", "index.md").write_text("# Topics")
+    build(config=mkdocs_conf)
+
+    index_page = next(p for p in clickup.pages.values() if p["sub_title"] == "topics/index.md")
+    assert clickup.pages[a_page_id]["parent_page_id"] == index_page["id"]
+    assert clickup.pages[placeholder["id"]]["archived"] is True
+
+
+@pytest.mark.parametrize(
+    "mkdocs_conf",
+    [
+        {
+            "config": _base_config(),
+            "pages": {"topics/index.md": "# Topics", "topics/a.md": "# A"},
+        },
+    ],
+    indirect=["mkdocs_conf"],
+)
+def test_reparenting_failure_raises_and_aborts(
+    mkdocs_conf: MkDocsConfig,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A PUT that fails while re-parenting a matched page is a normal, build-aborting failure."""
+    existing_id = "existing-a"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": existing_id,
+                        "sub_title": "topics/a.md",
+                        "name": "A",
+                        "content": "",
+                        "parent_page_id": None,
+                    },
+                ],
+            )
+        if request.method == "POST":
+            return httpx.Response(201, json={"id": "new-index-page"})
+        if request.method == "PUT":
+            return httpx.Response(500, text="internal error")
+        raise AssertionError(f"Unexpected method {request.method}")
+
+    original_init = httpx.Client.__init__
+
+    def patched_init(self: httpx.Client, *args: object, **kwargs: object) -> None:
+        kwargs["transport"] = httpx.MockTransport(handler)
+        original_init(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(httpx.Client, "__init__", patched_init)
+    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
+    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
+    caplog.set_level(logging.ERROR)
+
+    with pytest.raises(Abort):
+        build(config=mkdocs_conf)
+
+    assert "Failed to publish page 'topics/a.md' to ClickUp: 500" in caplog.text
