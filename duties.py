@@ -149,7 +149,7 @@ def publish(ctx: Context) -> None:
     )
 
 
-@duty(post=["build", "publish", "docs-deploy"])
+@duty(post=["build", "publish"])
 def release(ctx: Context, version: str = "") -> None:
     """Release a new Python package.
 

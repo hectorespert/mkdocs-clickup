@@ -192,6 +192,7 @@ jobs:
       env:
         PUBLISH_TO_CLICKUP: "1"
         CLICKUP_API_TOKEN: ${{ secrets.CLICKUP_API_TOKEN }}
+        CLICKUP_DOC_ID: "2kxuyd0w-512"
       run: |
         mkdir -p htmlcov && touch htmlcov/index.html
         python scripts/make run mkdocs build
