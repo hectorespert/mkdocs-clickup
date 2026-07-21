@@ -37,7 +37,7 @@ dependencies = [
     "markdownify>=0.14",
     "mdformat>=0.7.21",
     "mdformat-tables>=1.0",
-    "resvg-py>=0.3",
+    "resvg-py>=0.3.3",  # 0.3.2 rejects a float `zoom` argument at runtime
     "tenacity>=8.0",
 ]
 
