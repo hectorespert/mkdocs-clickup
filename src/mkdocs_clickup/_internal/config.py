@@ -13,3 +13,5 @@ class _PluginConfig(BaseConfig):
     preprocess = mkconf.Optional(mkconf.File(exists=True))
     workspace_id = mkconf.Optional(mkconf.Type(str))
     doc_id = mkconf.Optional(mkconf.Type(str))
+    token = mkconf.Optional(mkconf.Type(str))
+    publish = mkconf.Type(bool, default=False)

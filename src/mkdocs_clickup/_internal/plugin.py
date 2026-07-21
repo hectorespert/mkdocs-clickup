@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import mimetypes
-import os
 import posixpath
 import re
 from itertools import chain
@@ -39,18 +38,22 @@ if TYPE_CHECKING:
 
 _logger = _get_logger(__name__)
 
-_PUBLISH_ENV_VAR = "PUBLISH_TO_CLICKUP"
-_TOKEN_ENV_VAR = "CLICKUP_API_TOKEN"  # noqa: S105 (this is an env var name, not a secret)
-
 
 class MkdocsClickUpPlugin(BasePlugin[_PluginConfig]):
     """The MkDocs plugin to publish documentation to ClickUp Pages.
 
-    Publishing only happens when the `PUBLISH_TO_CLICKUP` environment variable is
-    set to a truthy value (e.g. `PUBLISH_TO_CLICKUP=1 mkdocs build`). This is
-    deliberate: `mkdocs serve` and `mkdocs gh-deploy` fire the same build hooks as
-    `mkdocs build`, so publishing unconditionally would create ClickUp pages on
-    every local save during development.
+    Publishing only happens when the `publish` configuration option is `true`
+    (it defaults to `false`). This is deliberate: `mkdocs serve` and
+    `mkdocs gh-deploy` fire the same build hooks as `mkdocs build`, so publishing
+    unconditionally would create ClickUp pages on every local save during
+    development. Wire `publish` (and `token`) through MkDocs' `!ENV` YAML tag so
+    only CI turns publishing on, e.g.:
+
+    ```yaml
+    - clickup:
+        token: !ENV CLICKUP_API_TOKEN
+        publish: !ENV [PUBLISH_TO_CLICKUP, false]
+    ```
 
     Check the [Developing Plugins](https://www.mkdocs.org/user-guide/plugins/#developing-plugins) page of `mkdocs`
     for more information about its plugin system.
@@ -102,17 +105,17 @@ class MkdocsClickUpPlugin(BasePlugin[_PluginConfig]):
         Parameters:
             config: MkDocs configuration.
         """
-        if not os.environ.get(_PUBLISH_ENV_VAR):
+        if not self.config.publish:
             return
 
         if not self.config.workspace_id or not self.config.doc_id:
             raise PluginError(
-                f"'workspace_id' and 'doc_id' must be set in the 'clickup' plugin configuration "
-                f"when {_PUBLISH_ENV_VAR} is set",
+                "'workspace_id' and 'doc_id' must be set in the 'clickup' plugin configuration "
+                "when 'publish' is enabled",
             )
-        token = os.environ.get(_TOKEN_ENV_VAR)
+        token = self.config.token
         if not token:
-            raise PluginError(f"The {_TOKEN_ENV_VAR} environment variable must be set to publish to ClickUp")
+            raise PluginError("The 'token' plugin configuration option must be set to publish to ClickUp")
 
         url = (
             f"https://api.clickup.com/api/v3/workspaces/{self.config.workspace_id}"

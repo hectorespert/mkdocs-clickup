@@ -16,22 +16,25 @@ pip install mkdocs-clickup
 
 ## Usage
 
-Enable the plugin in `mkdocs.yml`, pointing it at an existing ClickUp Workspace and Doc:
+Enable the plugin in `mkdocs.yml`, pointing it at an existing ClickUp Workspace and Doc. Publishing is opt-in per invocation via the `publish` option (it defaults to `false`), and requires a `token`. Wire both through MkDocs' `!ENV` YAML tag rather than committing them as literal values — `mkdocs.yml` is typically checked into version control, and a literal `token` there is equivalent to committing the secret:
 
 ```yaml title="mkdocs.yml"
 plugins:
 - clickup:
     workspace_id: "9010000000"
     doc_id: "abc123"
+    token: !ENV CLICKUP_API_TOKEN
+    publish: !ENV [PUBLISH_TO_CLICKUP, false]
 ```
-
-Publishing is opt-in per invocation, via the `PUBLISH_TO_CLICKUP` environment variable, and requires a `CLICKUP_API_TOKEN`:
 
 ```bash
-PUBLISH_TO_CLICKUP=1 CLICKUP_API_TOKEN=pk_... mkdocs build
+PUBLISH_TO_CLICKUP=true CLICKUP_API_TOKEN=pk_... mkdocs build
 ```
 
-Without `PUBLISH_TO_CLICKUP` set, the plugin does nothing — `mkdocs build`, `mkdocs serve`, and `mkdocs gh-deploy` all fire the same build hooks internally, and publishing unconditionally would create ClickUp pages on every local save during development. `mkdocs gh-deploy` also runs through this gate, so `PUBLISH_TO_CLICKUP=1 mkdocs gh-deploy` publishes to ClickUp in addition to deploying to GitHub Pages.
+> [!IMPORTANT]
+> MkDocs' `!ENV` tag resolves the environment variable's value using YAML's implicit type rules, not as a raw string. For a boolean option like `publish`, only `true`/`false` (or other YAML-recognized boolean tokens) resolve to a real boolean — `PUBLISH_TO_CLICKUP=1` resolves to the integer `1` and fails config validation. Always set it to `true`/`false`.
+
+Without `publish` set to `true`, the plugin does nothing — `mkdocs build`, `mkdocs serve`, and `mkdocs gh-deploy` all fire the same build hooks internally, and publishing unconditionally would create ClickUp pages on every local save during development. `mkdocs gh-deploy` also runs through this gate, so `PUBLISH_TO_CLICKUP=true mkdocs gh-deploy` publishes to ClickUp in addition to deploying to GitHub Pages.
 
 ### Known limitations
 

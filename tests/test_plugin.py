@@ -134,15 +134,19 @@ def _fast_retries(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(time, "sleep", lambda *_args, **_kwargs: None)
 
 
-def _base_config() -> dict:
+def _base_config(*, publish: bool = True, token: str | None = "token") -> dict:  # noqa: S107
     """Return a fresh plugin config dict (MkDocs mutates it in place during validation)."""
+    clickup_config: dict = {
+        "workspace_id": "ws1",
+        "doc_id": "doc1",
+        "publish": publish,
+    }
+    if token is not None:
+        clickup_config["token"] = token
     return {
         "plugins": [
             {
-                "clickup": {
-                    "workspace_id": "ws1",
-                    "doc_id": "doc1",
-                },
+                "clickup": clickup_config,
             },
         ],
     }
@@ -158,34 +162,28 @@ def _config_with_repo() -> dict:
 
 @pytest.mark.parametrize(
     "mkdocs_conf",
-    [{"config": _base_config(), "pages": {"index.md": "# Hello"}}],
+    [{"config": _base_config(publish=False), "pages": {"index.md": "# Hello"}}],
     indirect=["mkdocs_conf"],
 )
-def test_no_publish_without_env_var(
+def test_no_publish_when_disabled(
     mkdocs_conf: MkDocsConfig,
     clickup: FakeClickUp,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`on_post_build` makes no requests and raises nothing when PUBLISH_TO_CLICKUP is unset."""
-    monkeypatch.delenv("PUBLISH_TO_CLICKUP", raising=False)
-    monkeypatch.delenv("CLICKUP_API_TOKEN", raising=False)
+    """`on_post_build` makes no requests and raises nothing when `publish` is not enabled."""
     build(config=mkdocs_conf)
     assert clickup.requests == []
 
 
 @pytest.mark.parametrize(
     "mkdocs_conf",
-    [{"config": {"plugins": [{"clickup": {}}]}, "pages": {"index.md": "# Hello"}}],
+    [{"config": {"plugins": [{"clickup": {"token": "token", "publish": True}}]}, "pages": {"index.md": "# Hello"}}],
     indirect=["mkdocs_conf"],
 )
 def test_missing_workspace_or_doc_id_raises(
     mkdocs_conf: MkDocsConfig,
     clickup: FakeClickUp,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """`on_post_build` raises when workspace_id/doc_id are missing, if publishing is enabled."""
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
     plugin: MkdocsClickUpPlugin = mkdocs_conf.plugins["clickup"]  # type: ignore[assignment]
     plugin.on_config(mkdocs_conf)
     with pytest.raises(PluginError, match="workspace_id"):
@@ -195,20 +193,17 @@ def test_missing_workspace_or_doc_id_raises(
 
 @pytest.mark.parametrize(
     "mkdocs_conf",
-    [{"config": _base_config(), "pages": {"index.md": "# Hello"}}],
+    [{"config": _base_config(token=None), "pages": {"index.md": "# Hello"}}],
     indirect=["mkdocs_conf"],
 )
 def test_missing_token_raises(
     mkdocs_conf: MkDocsConfig,
     clickup: FakeClickUp,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`on_post_build` raises when CLICKUP_API_TOKEN is unset, if publishing is enabled."""
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.delenv("CLICKUP_API_TOKEN", raising=False)
+    """`on_post_build` raises when the `token` config option is unset, if publishing is enabled."""
     plugin: MkdocsClickUpPlugin = mkdocs_conf.plugins["clickup"]  # type: ignore[assignment]
     plugin.on_config(mkdocs_conf)
-    with pytest.raises(PluginError, match="CLICKUP_API_TOKEN"):
+    with pytest.raises(PluginError, match="token"):
         plugin.on_post_build(config=mkdocs_conf)
     assert clickup.requests == []
 
@@ -229,11 +224,8 @@ def test_missing_token_raises(
 def test_publishes_each_page(
     mkdocs_conf: MkDocsConfig,
     clickup: FakeClickUp,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Every converted page is created (no prior match), flat, with sub_title set to its src_uri."""
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
     build(config=mkdocs_conf)
 
     creates = [r for r in clickup.requests if r.method == "POST"]
@@ -265,11 +257,8 @@ def test_publishes_each_page(
 def test_relative_link_preserved(
     mkdocs_conf: MkDocsConfig,
     clickup: FakeClickUp,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Relative links are published exactly as authored, with no rewriting."""
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
     build(config=mkdocs_conf)
 
     bodies = [json.loads(r.content) for r in clickup.requests if r.method != "GET"]
@@ -285,12 +274,9 @@ def test_relative_link_preserved(
 def test_matched_page_is_updated_in_place(
     mkdocs_conf: MkDocsConfig,
     clickup: FakeClickUp,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A current page whose src_uri matches an existing page's sub_title is PUT, not POST."""
     page_id = clickup.seed(sub_title="index.md", name="Old title", content="Old content")
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
     build(config=mkdocs_conf)
 
     non_get = [r for r in clickup.requests if r.method != "GET"]
@@ -311,12 +297,9 @@ def test_matched_page_is_updated_in_place(
 def test_unmatched_page_is_created(
     mkdocs_conf: MkDocsConfig,
     clickup: FakeClickUp,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A current page with no matching sub_title is created, with sub_title set to its src_uri."""
     clickup.seed(sub_title="other.md", name="Unrelated")
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
     build(config=mkdocs_conf)
 
     creates = [r for r in clickup.requests if r.method == "POST"]
@@ -333,12 +316,9 @@ def test_unmatched_page_is_created(
 def test_orphaned_page_is_archived(
     mkdocs_conf: MkDocsConfig,
     clickup: FakeClickUp,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An existing page whose sub_title matches no current src_uri is archived."""
     orphan_id = clickup.seed(sub_title="removed.md", name="Removed page")
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
     build(config=mkdocs_conf)
 
     archive_requests = [
@@ -358,13 +338,10 @@ def test_orphaned_page_is_archived(
 def test_orphan_archive_failure_does_not_abort_build(
     mkdocs_conf: MkDocsConfig,
     clickup: FakeClickUp,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A failed archive attempt on an orphan is logged, not raised - the build still succeeds."""
     clickup.seed(sub_title="removed.md", name="Removed page")
     clickup.archive_fails = True
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
 
     build(config=mkdocs_conf)  # must not raise
 
@@ -380,11 +357,8 @@ def test_orphan_archive_failure_does_not_abort_build(
 def test_updates_same_page_on_rebuild(
     mkdocs_conf: MkDocsConfig,
     clickup: FakeClickUp,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Publishing the same page across two builds updates the same ClickUp page, not a new one."""
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
     build(config=mkdocs_conf)
     build(config=mkdocs_conf)
 
@@ -412,13 +386,10 @@ def test_updates_same_page_on_rebuild(
 def test_title_collision_does_not_cross_match(
     mkdocs_conf: MkDocsConfig,
     clickup: FakeClickUp,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Two pages sharing a title but with different src_uri are matched/updated independently."""
     page_a = clickup.seed(sub_title="a/index.md", name="Overview", content="Old A")
     page_b = clickup.seed(sub_title="b/index.md", name="Overview", content="Old B")
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
     build(config=mkdocs_conf)
 
     updates = [r for r in clickup.requests if r.method == "PUT"]
@@ -457,8 +428,6 @@ def test_publish_failure_raises_and_stops(
         original_init(self, *args, **kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr(httpx.Client, "__init__", patched_init)
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
 
     plugin: MkdocsClickUpPlugin = mkdocs_conf.plugins["clickup"]  # type: ignore[assignment]
     plugin.on_config(mkdocs_conf)
@@ -492,11 +461,8 @@ def test_publish_failure_raises_and_stops(
 def test_page_nested_under_real_index_anchor(
     mkdocs_conf: MkDocsConfig,
     clickup: FakeClickUp,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A page whose section has a real index page is parented to it; no placeholder is created."""
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
     build(config=mkdocs_conf)
 
     bodies = {json.loads(r.content)["sub_title"]: json.loads(r.content) for r in clickup.requests if r.method == "POST"}
@@ -522,11 +488,8 @@ def test_page_nested_under_real_index_anchor(
 def test_page_nested_under_placeholder_anchor(
     mkdocs_conf: MkDocsConfig,
     clickup: FakeClickUp,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A section with no index page gets an empty placeholder anchor; its pages are parented to it."""
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
     build(config=mkdocs_conf)
 
     creates = [json.loads(r.content) for r in clickup.requests if r.method == "POST"]
@@ -554,11 +517,8 @@ def test_page_nested_under_placeholder_anchor(
 def test_placeholder_is_updated_not_duplicated_on_rebuild(
     mkdocs_conf: MkDocsConfig,
     clickup: FakeClickUp,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The same section's placeholder anchor is updated, not recreated, on a second build."""
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
     build(config=mkdocs_conf)
     build(config=mkdocs_conf)
 
@@ -603,11 +563,8 @@ def test_fetch_existing_pages_flattens_nested_tree() -> None:
 def test_reparented_when_section_gains_index_page(
     mkdocs_conf: MkDocsConfig,
     clickup: FakeClickUp,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When a section gains a real index page, siblings are re-parented and the old placeholder is archived."""
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
     build(config=mkdocs_conf)
 
     placeholder = next(p for p in clickup.pages.values() if p["sub_title"].startswith("__section__:"))
@@ -667,8 +624,6 @@ def test_reparenting_failure_raises_and_aborts(
         original_init(self, *args, **kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr(httpx.Client, "__init__", patched_init)
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
     caplog.set_level(logging.ERROR)
 
     with pytest.raises(Abort):
@@ -685,12 +640,9 @@ def test_reparenting_failure_raises_and_aborts(
 def test_transient_failures_are_retried_then_succeed(
     mkdocs_conf: MkDocsConfig,
     clickup: FakeClickUp,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Transient 5xx responses are retried until a later attempt succeeds; no build abort."""
     clickup.transient_failures = 2  # first two create attempts fail, third succeeds
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
 
     build(config=mkdocs_conf)  # must not raise
 
@@ -734,12 +686,9 @@ def test_wait_policy_honors_retry_after() -> None:
 def test_deterministic_client_error_is_not_retried(
     mkdocs_conf: MkDocsConfig,
     clickup: FakeClickUp,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A non-429 4xx response surfaces immediately without any retries."""
     clickup.client_error = 400
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
 
     with pytest.raises(Abort):
         build(config=mkdocs_conf)
@@ -756,12 +705,9 @@ def test_deterministic_client_error_is_not_retried(
 def test_retries_exhausted_aborts_build(
     mkdocs_conf: MkDocsConfig,
     clickup: FakeClickUp,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When every attempt fails transiently, the build aborts after exactly _MAX_ATTEMPTS tries."""
     clickup.transient_failures = 999  # never recovers
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
 
     with pytest.raises(Abort):
         build(config=mkdocs_conf)
@@ -778,12 +724,9 @@ def test_retries_exhausted_aborts_build(
 def test_lost_post_response_is_adopted_without_duplicate(
     mkdocs_conf: MkDocsConfig,
     clickup: FakeClickUp,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A POST whose response is lost after the page was created is adopted, not duplicated."""
     clickup.lost_post_once = True  # first POST commits the page but returns 503
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
 
     build(config=mkdocs_conf)  # must not raise
 
@@ -801,11 +744,8 @@ def test_lost_post_response_is_adopted_without_duplicate(
 def test_notice_is_prepended_to_content(
     mkdocs_conf: MkDocsConfig,
     clickup: FakeClickUp,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Every published page begins with the do-not-edit notice, then its own Markdown."""
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
     build(config=mkdocs_conf)
 
     body = next(json.loads(r.content) for r in clickup.requests if r.method == "POST")
@@ -824,11 +764,8 @@ def test_notice_is_prepended_to_content(
 def test_notice_links_to_source_when_edit_url_available(
     mkdocs_conf: MkDocsConfig,
     clickup: FakeClickUp,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """With repo_url/edit_uri configured, the notice links to the page's source."""
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
     build(config=mkdocs_conf)
 
     body = next(json.loads(r.content) for r in clickup.requests if r.method == "POST")
@@ -846,11 +783,8 @@ def test_notice_links_to_source_when_edit_url_available(
 def test_notice_has_no_link_without_edit_url(
     mkdocs_conf: MkDocsConfig,
     clickup: FakeClickUp,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Without repo configuration a page has no edit URL, so the notice carries no link."""
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
     build(config=mkdocs_conf)
 
     body = next(json.loads(r.content) for r in clickup.requests if r.method == "POST")
@@ -866,11 +800,8 @@ def test_notice_has_no_link_without_edit_url(
 def test_notice_does_not_accumulate_on_rebuild(
     mkdocs_conf: MkDocsConfig,
     clickup: FakeClickUp,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The notice appears exactly once even after multiple builds (content is overwritten)."""
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
     build(config=mkdocs_conf)
     build(config=mkdocs_conf)
 

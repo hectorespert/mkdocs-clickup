@@ -147,6 +147,8 @@ plugins:
 - clickup:
     workspace_id: "90121909276"
     doc_id: !ENV [CLICKUP_DOC_ID, "2kxuyd0w-532"]
+    token: !ENV CLICKUP_API_TOKEN
+    publish: !ENV [PUBLISH_TO_CLICKUP, false]
 
 extra:
   social:
