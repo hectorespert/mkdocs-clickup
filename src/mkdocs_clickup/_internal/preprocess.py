@@ -53,10 +53,9 @@ def _preprocess(soup: Soup, module_path: str, output: str) -> None:
 
 
 def _to_remove(tag: Tag) -> bool:
-    # Remove images and SVGs.
-    if tag.name in {"img", "svg"}:
-        return True
-    # Remove links containing images or SVGs.
+    # Remove links wrapping an image/SVG that is itself marked for removal
+    # (e.g. a decorative Twemoji/icon glyph). Real content images/SVGs are
+    # preserved, so a link wrapping one of those is left untouched.
     if tag.name == "a" and tag.img and _to_remove(tag.img):
         return True
 
@@ -65,7 +64,11 @@ def _to_remove(tag: Tag) -> bool:
     # Remove permalinks.
     if tag.name == "a" and "headerlink" in classes:
         return True
-    # Remove Twemojis.
+    # Remove decorative Twemoji/icon glyphs (emoji and `:material-*:` icon
+    # shortcodes), rendered as either `<img>` or inline `<svg>` depending on
+    # the configured emoji generator. Content images and SVGs (e.g. diagrams,
+    # screenshots) are preserved and embedded instead - see `_resolve_images`
+    # in `plugin.py`.
     if "twemoji" in classes:
         return True
     # Remove tab labels.
