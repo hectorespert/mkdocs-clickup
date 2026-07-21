@@ -141,7 +141,7 @@ plugins:
 - typeset
 - clickup:
     workspace_id: "90121909276"
-    doc_id: "2kxuyd0w-532"
+    doc_id: !ENV [CLICKUP_DOC_ID, "2kxuyd0w-532"]
 
 extra:
   social:

@@ -50,7 +50,6 @@ Releases are cut **locally**, driven by the `duty`-based task runner (`python sc
 
 - A clean working tree on `main` with push access to the repository.
 - PyPI credentials available to `twine` (e.g. an API token in `~/.pypirc`, or `TWINE_USERNAME=__token__` / `TWINE_PASSWORD=pypi-...` in the environment) — the release publishes to PyPI from your machine.
-- The docs deploy pushes to the `gh-pages` branch via `mkdocs gh-deploy`.
 
 **Steps**
 
@@ -72,11 +71,13 @@ Releases are cut **locally**, driven by the `duty`-based task runner (`python sc
    - stages `pyproject.toml` + `CHANGELOG.md` and commits them as `chore: Prepare release 0.6.0`;
    - creates an annotated Git tag `0.6.0`;
    - pushes the commit and the tag (`git push` + `git push --tags`);
-   - then, via its post-hooks, builds the source and wheel distributions (`build`), uploads them to PyPI (`publish`, `twine upload --skip-existing`), and deploys the documentation to GitHub Pages (`docs-deploy`, `mkdocs gh-deploy --force`).
+   - then, via its post-hooks, builds the source and wheel distributions (`build`) and uploads them to PyPI (`publish`, `twine upload --skip-existing`).
 
-3. **GitHub Release (automated)** — pushing the tag triggers `.github/workflows/release.yml`, which generates release notes with `git-changelog --release-notes` and creates the corresponding GitHub Release.
+3. **GitHub Actions (automated)** — pushing the tag triggers `.github/workflows/release.yml`, which:
+   - generates release notes with `git-changelog --release-notes` and creates the corresponding GitHub Release;
+   - builds the docs and publishes them to ClickUp (`PUBLISH_TO_CLICKUP=1 mkdocs build`), targeting the release Doc configured in `mkdocs.yml`.
 
-> Publishing the documentation to ClickUp is **not** part of the release flow yet; it is a manual, opt-in build (`PUBLISH_TO_CLICKUP=1 CLICKUP_API_TOKEN=... mkdocs build`, see [Usage](#usage)).
+Docs are no longer deployed to GitHub Pages as part of a release; ClickUp is now the published destination. `python scripts/make docs-deploy` (`mkdocs gh-deploy --force`) still exists as a manual, opt-in command if you need it.
 
 ## ClickUp API research
 
