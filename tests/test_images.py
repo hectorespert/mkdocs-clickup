@@ -26,7 +26,7 @@ _PNG_BYTES = base64.b64decode(
 
 def _base_config(*, autoclean: bool | None = None, site_url: str | None = "https://example.org/") -> dict:
     """Return a fresh plugin config dict (MkDocs mutates it in place during validation)."""
-    clickup_config: dict = {"workspace_id": "ws1", "doc_id": "doc1"}
+    clickup_config: dict = {"workspace_id": "ws1", "doc_id": "doc1", "token": "token", "publish": True}
     if autoclean is not None:
         clickup_config["autoclean"] = autoclean
     config: dict = {"plugins": [{"clickup": clickup_config}]}
@@ -69,12 +69,9 @@ def _published_content(requests: list[httpx.Request]) -> str:
 def test_local_image_embedded_as_data_uri(
     mkdocs_conf: MkDocsConfig,
     clickup_requests: list[httpx.Request],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A local image is read from disk and embedded as a base64 data URI with the correct MIME type."""
     Path(mkdocs_conf.docs_dir, "pic.png").write_bytes(_PNG_BYTES)
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
     build(config=mkdocs_conf)
 
     content = _published_content(clickup_requests)
@@ -90,12 +87,9 @@ def test_local_image_embedded_as_data_uri(
 def test_local_image_embedded_regardless_of_autoclean(
     mkdocs_conf: MkDocsConfig,
     clickup_requests: list[httpx.Request],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Images are embedded whether `autoclean` is enabled or disabled - it no longer controls this."""
     Path(mkdocs_conf.docs_dir, "pic.png").write_bytes(_PNG_BYTES)
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
     build(config=mkdocs_conf)
 
     content = _published_content(clickup_requests)
@@ -115,11 +109,8 @@ def test_local_image_embedded_regardless_of_autoclean(
 def test_content_svg_embedded_as_data_uri(
     mkdocs_conf: MkDocsConfig,
     clickup_requests: list[httpx.Request],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An inline content SVG (no twemoji class) survives autoclean and is rasterized to a PNG data URI."""
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
     build(config=mkdocs_conf)
 
     content = _published_content(clickup_requests)
@@ -145,12 +136,9 @@ def test_content_svg_embedded_as_data_uri(
 def test_decorative_twemoji_icons_still_removed(
     mkdocs_conf: MkDocsConfig,
     clickup_requests: list[httpx.Request],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A decorative twemoji-classed SVG or image (emoji / :material-*: icon shortcode) is still removed."""
     Path(mkdocs_conf.docs_dir, "icon.png").write_bytes(_PNG_BYTES)
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
     build(config=mkdocs_conf)
 
     content = _published_content(clickup_requests)
@@ -171,11 +159,8 @@ def test_decorative_twemoji_icons_still_removed(
 def test_remote_image_left_untouched(
     mkdocs_conf: MkDocsConfig,
     clickup_requests: list[httpx.Request],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An already-absolute/remote image src is published unchanged, never embedded."""
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
     build(config=mkdocs_conf)
 
     content = _published_content(clickup_requests)
@@ -191,12 +176,8 @@ def test_remote_image_left_untouched(
 def test_missing_local_image_aborts_build(
     mkdocs_conf: MkDocsConfig,
     clickup_requests: list[httpx.Request],  # noqa: ARG001
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A local image reference that resolves to no file aborts the build."""
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
-
     with pytest.raises(Abort):
         build(config=mkdocs_conf)
 
@@ -209,12 +190,9 @@ def test_missing_local_image_aborts_build(
 def test_embedding_works_without_site_url(
     mkdocs_conf: MkDocsConfig,
     clickup_requests: list[httpx.Request],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Embedding a local image does not depend on `site_url` being configured."""
     Path(mkdocs_conf.docs_dir, "pic.png").write_bytes(_PNG_BYTES)
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
     build(config=mkdocs_conf)
 
     content = _published_content(clickup_requests)

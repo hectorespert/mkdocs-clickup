@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Publish MkDocs-generated page content to a ClickUp Doc as ClickUp Pages nested to mirror the MkDocs `nav` hierarchy, using a fixed-env-var API token and required `workspace_id`/`doc_id` plugin config, idempotently creating or updating pages by matching them across builds via `sub_title`, and retrying transient ClickUp API failures so intermittent errors don't abort the build. Images, content SVGs, and locally-rendered Mermaid diagrams are embedded inline as `data:` URIs rather than linked, so published pages carry their visual content without depending on the site being deployed.
+Publish MkDocs-generated page content to a ClickUp Doc as ClickUp Pages nested to mirror the MkDocs `nav` hierarchy, using a `token`/`publish`/`workspace_id`/`doc_id` plugin config (with `token`/`publish` typically sourced from the environment via MkDocs' `!ENV` YAML tag), idempotently creating or updating pages by matching them across builds via `sub_title`, and retrying transient ClickUp API failures so intermittent errors don't abort the build. Images, content SVGs, and locally-rendered Mermaid diagrams are embedded inline as `data:` URIs rather than linked, so published pages carry their visual content without depending on the site being deployed.
 
 ## Requirements
 
@@ -21,28 +21,28 @@ The plugin SHALL publish every page that MkDocs converts to Markdown. There is n
 - **THEN** the plugin SHALL attempt to create N ClickUp Pages, one per converted page, with no exclusions
 
 ### Requirement: Publishing is opt-in per invocation
-The plugin SHALL only attempt to publish pages to ClickUp when the `PUBLISH_TO_CLICKUP` environment variable is set to a truthy value. When it is unset or falsy, `on_post_build` SHALL do nothing — no configuration validation, no HTTP calls — regardless of whether `workspace_id`, `doc_id`, or the API token are set or valid.
+The plugin SHALL only attempt to publish pages to ClickUp when the `publish` plugin configuration option is set to `true`. When it is unset or `false` (the default), `on_post_build` SHALL do nothing — no configuration validation, no HTTP calls — regardless of whether `workspace_id`, `doc_id`, or `token` are set or valid.
 
 #### Scenario: Publishing disabled by default
-- **WHEN** a MkDocs build runs (via `build`, `serve`, or `gh-deploy`) without `PUBLISH_TO_CLICKUP` set to a truthy value
-- **THEN** the plugin SHALL NOT make any ClickUp API requests and SHALL NOT validate `workspace_id`, `doc_id`, or the API token
+- **WHEN** a MkDocs build runs (via `build`, `serve`, or `gh-deploy`) without `publish` set to `true` in the plugin configuration
+- **THEN** the plugin SHALL NOT make any ClickUp API requests and SHALL NOT validate `workspace_id`, `doc_id`, or `token`
 
 #### Scenario: Publishing enabled explicitly
-- **WHEN** `PUBLISH_TO_CLICKUP` is set to a truthy value and a MkDocs build completes
+- **WHEN** `publish` is set to `true` in the plugin configuration and a MkDocs build completes
 - **THEN** the plugin SHALL validate its ClickUp configuration and proceed to publish converted pages
 
 ### Requirement: Required workspace and Doc configuration when publishing
-`workspace_id` and `doc_id` (identifying an existing ClickUp Workspace and Doc to publish into) are optional at the plugin's configuration-schema level, so that builds which do not publish are not forced to set them. When publishing is enabled (`PUBLISH_TO_CLICKUP` is set), the plugin SHALL require both to be present. The plugin SHALL NOT create a Workspace or Doc itself.
+`workspace_id` and `doc_id` (identifying an existing ClickUp Workspace and Doc to publish into) are optional at the plugin's configuration-schema level, so that builds which do not publish are not forced to set them. When publishing is enabled (`publish` is `true`), the plugin SHALL require both to be present. The plugin SHALL NOT create a Workspace or Doc itself.
 
 #### Scenario: Missing workspace_id or doc_id while publishing is enabled
-- **WHEN** `PUBLISH_TO_CLICKUP` is set to a truthy value and the plugin config does not include both `workspace_id` and `doc_id`
+- **WHEN** `publish` is set to `true` and the plugin config does not include both `workspace_id` and `doc_id`
 - **THEN** the plugin SHALL raise an error during `on_post_build`, before attempting to publish any pages
 
-### Requirement: API token from environment variable, validated when publishing
-When publishing is enabled, the plugin SHALL read the ClickUp API token from the `CLICKUP_API_TOKEN` environment variable. The plugin configuration SHALL NOT accept the token as a `mkdocs.yml` value.
+### Requirement: API token from plugin configuration, validated when publishing
+When publishing is enabled, the plugin SHALL read the ClickUp API token from the `token` plugin configuration option. The plugin configuration SHALL accept the token as a `mkdocs.yml` value; sourcing it from an environment variable (e.g. via MkDocs' `!ENV` YAML tag) rather than a literal string is the site author's responsibility, not the plugin's.
 
 #### Scenario: Missing token while publishing is enabled
-- **WHEN** `PUBLISH_TO_CLICKUP` is set to a truthy value and the `CLICKUP_API_TOKEN` environment variable is not set
+- **WHEN** `publish` is set to `true` and the `token` plugin configuration option is not set
 - **THEN** the plugin SHALL raise an error during `on_post_build`, before attempting to publish any pages
 
 ### Requirement: Pages are nested to mirror MkDocs navigation

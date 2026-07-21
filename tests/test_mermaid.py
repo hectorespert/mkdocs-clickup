@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 def _config() -> dict:
     """A fresh plugin config dict with the Mermaid custom fence configured."""
     return {
-        "plugins": [{"clickup": {"workspace_id": "ws1", "doc_id": "doc1"}}],
+        "plugins": [{"clickup": {"workspace_id": "ws1", "doc_id": "doc1", "token": "token", "publish": True}}],
         "markdown_extensions": [
             {
                 "pymdownx.superfences": {
@@ -74,11 +74,8 @@ def _published_content(requests: list[httpx.Request], *, sub_title: str) -> str:
 def test_renderable_mermaid_fence_is_embedded(
     mkdocs_conf: MkDocsConfig,
     clickup_requests: list[httpx.Request],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A renderable Mermaid fence is embedded as a `data:image/png` URI, not published as code."""
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
     build(config=mkdocs_conf)
 
     content = _published_content(clickup_requests, sub_title="index.md")
@@ -99,11 +96,8 @@ def test_renderable_mermaid_fence_is_embedded(
 def test_unrenderable_mermaid_fence_falls_back_to_code(
     mkdocs_conf: MkDocsConfig,
     clickup_requests: list[httpx.Request],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An unrenderable Mermaid fence falls back to a plain fenced code block; the build does not abort."""
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
     build(config=mkdocs_conf)  # must not raise
 
     content = _published_content(clickup_requests, sub_title="index.md")
@@ -127,11 +121,8 @@ def test_unrenderable_mermaid_fence_falls_back_to_code(
 def test_unrenderable_diagram_does_not_block_other_pages(
     mkdocs_conf: MkDocsConfig,
     clickup_requests: list[httpx.Request],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A page with an unrenderable diagram doesn't stop other pages from publishing successfully."""
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
     build(config=mkdocs_conf)  # must not raise
 
     sub_titles = {json.loads(r.content)["sub_title"] for r in clickup_requests if r.method == "POST"}
@@ -146,11 +137,8 @@ def test_unrenderable_diagram_does_not_block_other_pages(
 def test_page_without_mermaid_is_unaffected(
     mkdocs_conf: MkDocsConfig,
     clickup_requests: list[httpx.Request],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A page with no Mermaid content publishes normally, unaffected by the new rendering step."""
-    monkeypatch.setenv("PUBLISH_TO_CLICKUP", "1")
-    monkeypatch.setenv("CLICKUP_API_TOKEN", "token")
     build(config=mkdocs_conf)
 
     content = _published_content(clickup_requests, sub_title="index.md")
