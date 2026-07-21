@@ -149,9 +149,13 @@ def publish(ctx: Context) -> None:
     )
 
 
-@duty(post=["build", "publish"])
+@duty
 def release(ctx: Context, version: str = "") -> None:
     """Release a new Python package.
+
+    Building and publishing to PyPI happens in CI (`publish-pypi` job in
+    `release.yml`, via PyPI Trusted Publishing) once the pushed tag triggers it -
+    not here, so this no longer needs local PyPI credentials.
 
     Parameters:
         version: The new version number to use.

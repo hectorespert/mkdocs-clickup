@@ -27,6 +27,38 @@ jobs:
       with:
         body_path: release-notes.md
 
+  publish-pypi:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      id-token: write
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        fetch-tags: true
+
+    - name: Setup Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: "3.13"
+
+    - name: Setup uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        enable-cache: true
+        cache-dependency-glob: pyproject.toml
+
+    - name: Install dependencies
+      run: python scripts/make setup
+
+    - name: Build distributions
+      run: python scripts/make build
+
+    - name: Publish to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+
   publish-clickup:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')

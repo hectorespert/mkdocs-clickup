@@ -58,7 +58,7 @@ Releases are cut **locally**, driven by the `duty`-based task runner (`python sc
 **Prerequisites**
 
 - A clean working tree on `main` with push access to the repository.
-- PyPI credentials available to `twine` (e.g. an API token in `~/.pypirc`, or `TWINE_USERNAME=__token__` / `TWINE_PASSWORD=pypi-...` in the environment) — the release publishes to PyPI from your machine.
+- PyPI publishing uses [Trusted Publishing](https://docs.pypi.org/trusted-publishers/) (OIDC) from the `publish-pypi` job in `release.yml` — no PyPI credentials needed on your machine. This requires a one-time setup on PyPI itself: on the [`mkdocs-clickup` project's Publishing settings](https://pypi.org/manage/project/mkdocs-clickup/settings/publishing/), add a trusted publisher with owner `hectorespert`, repository `mkdocs-clickup`, workflow `release.yml`, and no environment name.
 
 **Steps**
 
@@ -70,23 +70,22 @@ Releases are cut **locally**, driven by the `duty`-based task runner (`python sc
 
    Review the generated `CHANGELOG.md` and commit any manual touch-ups you need before releasing.
 
-2. **Release** — this single task does everything else:
+2. **Release** — this single local task:
 
    ```bash
    python scripts/make release 0.6.0
    ```
 
-   It runs locally and, in order:
    - stages `pyproject.toml` + `CHANGELOG.md` and commits them as `chore: Prepare release 0.6.0`;
    - creates an annotated Git tag `0.6.0`;
-   - pushes the commit and the tag (`git push` + `git push --tags`);
-   - then, via its post-hooks, builds the source and wheel distributions (`build`) and uploads them to PyPI (`publish`, `twine upload --skip-existing`).
+   - pushes the commit and the tag (`git push` + `git push --tags`).
 
 3. **GitHub Actions (automated)** — pushing the tag triggers `.github/workflows/release.yml`, which:
    - generates release notes with `git-changelog --release-notes` and creates the corresponding GitHub Release;
+   - builds the source/wheel distributions and publishes them to PyPI via Trusted Publishing (`publish-pypi` job — no stored token);
    - builds the docs and publishes them to ClickUp (`PUBLISH_TO_CLICKUP=1 mkdocs build`), targeting the release Doc configured in `mkdocs.yml`.
 
-Docs are no longer deployed to GitHub Pages as part of a release; ClickUp is now the published destination. `python scripts/make docs-deploy` (`mkdocs gh-deploy --force`) still exists as a manual, opt-in command if you need it.
+Docs are no longer deployed to GitHub Pages as part of a release; ClickUp is now the published destination. `python scripts/make docs-deploy` (`mkdocs gh-deploy --force`) still exists as a manual, opt-in command if you need it. `python scripts/make build`/`publish` also still exist as standalone local commands if you ever need to build or upload a distribution by hand.
 
 ## ClickUp API research
 
