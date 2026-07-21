@@ -41,6 +41,15 @@ Without `PUBLISH_TO_CLICKUP` set, the plugin does nothing — `mkdocs build`, `m
 - **Pages mirror the MkDocs navigation hierarchy.** Each `nav` section is anchored by a real page (its direct `index.md`/`README.md` child, if it has one) or, if it has none, by an empty placeholder page created just to hold that spot in the tree — both cases use ClickUp's `parent_page_id` (undocumented in ClickUp's public API reference, like `archived`, but verified to work reliably, including re-parenting an existing page when its position in the hierarchy changes between builds). This is the default behavior; there's no configuration to keep pages flat. A flat site (no nested `nav` sections) publishes exactly as before. Sibling order within ClickUp may not match your `nav:` order — there's no documented API control over it.
 - **Links are published as-authored.** Relative links between pages are not rewritten in any way; they are not resolved against ClickUp's own addressing model. Confirmed against a real ClickUp workspace: ClickUp itself parses submitted Markdown into its own document model on ingestion, and a relative link pointing at a target it can't resolve (e.g. `other.md`) is normalized away, keeping only the link's text — this is ClickUp's own behavior, not something the plugin does.
 - **Every page MkDocs builds is published** — there's no page-selection or filtering configuration yet.
+- **Images are embedded inline, not linked.** Local `<img>` sources are read from disk and embedded as `data:` URIs directly in the published Markdown — no dependency on the site being deployed or `site_url` being set. Already-absolute/remote image URLs are published unchanged. Decorative icons (emoji and `:material-*:`-style shortcodes) are still stripped, same as before; a broken local image reference fails the build rather than publishing silently-missing content.
+- **Content SVGs are rasterized to PNG, not embedded as SVG.** An inline `<svg>` diagram is rasterized locally (via `resvg`) and embedded as a `data:image/png` URI. This isn't a stylistic choice: live-verified against a real ClickUp workspace, an SVG survives round-tripping through the plugin's HTML parser with case-sensitive attributes silently corrupted (`viewBox` → `viewbox`), and separately, ClickUp itself was found to fail rendering a large, `<style>`-heavy SVG even when well-formed. PNG sidesteps both.
+- **Mermaid diagrams are rendered locally, as an opt-in extra.** A `` ```mermaid `` fenced code block (as produced by mkdocs-material's diagram support) is rendered to a PNG image at build time (same reasoning as above — Mermaid's own SVG output failed to render in ClickUp) and embedded the same way as any other content image — ClickUp does not render Mermaid source submitted through its Page API, even though its own editor can render Mermaid pasted manually. This requires the `mermaid` extra:
+
+  ```bash
+  pip install "mkdocs-clickup[mermaid]"
+  ```
+
+  Without it installed, or if a specific diagram's syntax can't be rendered, that block is published as a plain fenced code block instead — a renderer limitation, not a build failure.
 
 ## Releasing
 
@@ -202,14 +211,66 @@ unlimited throughput.
   either an existing Doc ID (simplest — publish into an already-created Doc)
   or a `parent` reference (Space/Folder/List ID) to create a new Doc under.
 
+### 8. Image support — resolved, live-verified
+
+There is **no attachment/upload endpoint for Docs or Pages**. The v3
+Attachments API (`GET/POST
+.../workspaces/{id}/{entity_type}/{entity_id}/attachments`) only accepts
+`entity_type` values `attachments` (tasks) and `custom_fields` (File-type
+Custom Field) — confirmed via the "Get Attachments" reference page and
+independently via ClickUp community/feedback reports ("no endpoint exists to
+add attachments to a doc via API").
+
+The official Docs import/export limitations page
+(`developer.clickup.com/docs/docsimportexportlimitations`) states, verbatim:
+**"Attachments: Yes, but sizing is not retained"** — confirming images are
+supported through the same `content`/`content_format` mechanism already used
+for Create/Edit Page: a plain Markdown image reference, `![alt](url)`.
+
+Live-verified against a real ClickUp workspace (Create/Edit Page API, not
+just the manual editor): a `data:image/png;base64,...` URI and a normal
+remote image URL round-trip **identically** through `content_format=text/md`
+(preserved verbatim) and `content_format=text/plain` (both collapse to
+blank — consistent with both being recognized as embedded-image blocks, not
+broken text), and both render correctly when viewed in the ClickUp UI. So
+either a `data:` URI or an absolute URL works; a `data:` URI additionally
+removes any dependency on the site being deployed/publicly reachable before
+publishing, at the cost of inflating `content`'s size (~33% over the image's
+own byte size) — see item 4 below.
+
+Also confirmed (separately): passing a `` ```mermaid `` fenced code block
+through `content` renders as a plain code block, not a live diagram — Mermaid
+rendering via the Create/Edit Page API path is not supported, even though
+ClickUp's own editor can render Mermaid when pasted manually into a
+different, UI-only block type.
+
+**Later, live-verified against the plugin's own real documentation** (not
+just synthetic probes): `data:image/svg+xml` does **not** reliably render.
+A large, `<style>`-heavy SVG (Mermaid's own output) showed as literal
+unrendered Markdown text. Separately, a hand-authored inline SVG also failed
+to render — traced to a plugin-side bug, not a ClickUp one: `BeautifulSoup`'s
+`html.parser` lowercases attribute names on parse, silently corrupting
+case-sensitive SVG attributes (`viewBox` → `viewbox`) before they ever reach
+ClickUp. Small, simple SVGs (e.g. a single `<rect>`, or a small shape with
+`<defs>`/`<marker>`/`<text>`) rendered fine in isolated tests, so this may be
+survivable-complexity-dependent rather than an outright SVG ban — but since
+PNG has rendered correctly in **every** test run against this API, the
+plugin now rasterizes all SVG content (Mermaid diagrams and hand-authored
+content SVGs alike) to PNG before embedding, rather than chasing exactly
+which SVG constructs ClickUp's importer tolerates.
+
 ### Open items needing a live-token check before implementation
 
 1. Exact shape of the `parent` object on Create Doc (`{id, type}` or similar).
 2. Whether Create Page's response body includes the new `page_id`.
 3. Exact response shape of "Fetch Pages belonging to a Doc" for parent/child
    nesting (to confirm the hierarchy model assumed in §2).
-4. Whether there's any size/length limit on `content` per page (relevant for
-   very long generated Markdown pages, e.g. API reference pages).
+4. Whether there's any size/length limit on `content` per page. Relevant for
+   very long generated Markdown pages (e.g. API reference pages), and now
+   also for image-heavy pages using the `data:` URI approach from §8 — still
+   unresolved; a build-time test would need to write increasingly large
+   payloads to a real Doc to find the threshold, ideally against a
+   disposable/sandbox workspace rather than production.
 
 ### Sources
 

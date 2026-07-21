@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import base64
+import mimetypes
 import os
+import posixpath
+import re
 from itertools import chain
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
+from urllib.parse import unquote, urlsplit
 
 import httpx
 import mdformat
+import resvg_py
 from bs4 import BeautifulSoup as Soup
 from bs4 import Tag
 from markdownify import ATX, MarkdownConverter
@@ -26,6 +32,7 @@ if TYPE_CHECKING:
     from typing import Any
 
     from mkdocs.config.defaults import MkDocsConfig
+    from mkdocs.structure.files import File, Files
     from mkdocs.structure.nav import Section
     from mkdocs.structure.pages import Page
 
@@ -65,7 +72,7 @@ class MkdocsClickUpPlugin(BasePlugin[_PluginConfig]):
         self._md_pages = {}
         return config
 
-    def on_page_content(self, html: str, *, page: Page, **kwargs: Any) -> str | None:  # noqa: ARG002
+    def on_page_content(self, html: str, *, page: Page, files: Files, **kwargs: Any) -> str | None:  # noqa: ARG002
         """Convert page content into Markdown and store the result for later use.
 
         Hook for the [`on_page_content` event](https://www.mkdocs.org/user-guide/plugins/#on_page_content).
@@ -73,12 +80,14 @@ class MkdocsClickUpPlugin(BasePlugin[_PluginConfig]):
         Parameters:
             html: The rendered HTML.
             page: The page object.
+            files: The collection of all files in the site, used to resolve local image sources.
         """
         page_md = _generate_page_markdown(
             html,
             should_autoclean=self.config.autoclean,
             preprocess=self.config.preprocess,
             path=page.file.dest_uri,
+            files=files,
         )
         title = page.title if page.title is not None else page.file.src_uri
         self._md_pages[page.file.src_uri] = (str(title), page_md, page.parent, page.edit_url)
@@ -546,6 +555,7 @@ def _generate_page_markdown(
     should_autoclean: bool,
     preprocess: str | None,
     path: str,
+    files: Files,
 ) -> str:
     """Convert HTML to Markdown.
 
@@ -554,17 +564,182 @@ def _generate_page_markdown(
         should_autoclean: Whether to autoclean the HTML.
         preprocess: An optional path of a Python module containing a `preprocess` function.
         path: The output path of the relevant Markdown file.
+        files: The collection of all files in the site, used to resolve local image sources.
 
     Returns:
         The Markdown content.
     """
+    html = _rasterize_content_svgs(html, page_dest_uri=path)
     soup = Soup(html, "html.parser")
     if should_autoclean:
         autoclean(soup)
     if preprocess:
         _preprocess(soup, preprocess, path)
+    _render_mermaid_diagrams(soup)
+    _resolve_images(soup, files=files, page_dest_uri=path)
     return mdformat.text(
         _converter.convert_soup(soup),
         options={"wrap": "no"},
         extensions=("tables",),
     )
+
+
+_SVG_BLOCK_RE = re.compile(r"<svg\b[^>]*>.*?</svg\s*>", re.IGNORECASE | re.DOTALL)
+_CLASS_ATTR_RE = re.compile(r'\bclass\s*=\s*(["\'])(.*?)\1', re.IGNORECASE)
+
+
+def _rasterize_content_svgs(html: str, *, page_dest_uri: str) -> str:
+    """Rasterize inline content SVGs to `data:image/png` URIs, on the raw HTML string.
+
+    This runs *before* HTML is parsed into a soup, so case-sensitive SVG attribute names
+    (`viewBox`, `markerWidth`, `refX`, ...) survive intact. `BeautifulSoup`'s `html.parser`
+    lowercases attribute names on parse (confirmed directly: `<svg viewBox="...">` round-trips
+    as `<svg viewbox="...">`), which silently corrupts those attributes - live-verified against
+    a real ClickUp workspace to break the diagram entirely. Rasterizing to PNG (via `resvg_py`)
+    from the pristine, not-yet-parsed markup avoids that class of bug outright, and also sidesteps
+    ClickUp failing to render a large, `<style>`-heavy SVG (also live-verified).
+
+    Decorative Twemoji/icon SVGs (`class="twemoji"`) are left untouched here - `autoclean` removes
+    them afterward via its own class-based check, which only inspects the `class` attribute and is
+    unaffected by the attribute-name-casing issue above.
+
+    Parameters:
+        html: The raw HTML content, before any parsing.
+        page_dest_uri: The current page's destination URI, used in the error message on failure.
+
+    Returns:
+        The HTML with non-decorative inline `<svg>` blocks replaced by `<img>` tags embedding the
+        rasterized PNG as a `data:` URI.
+
+    Raises:
+        PluginError: When a content SVG's markup can't be rasterized.
+    """
+
+    def replace(match: re.Match[str]) -> str:
+        svg_markup = match.group(0)
+        opening_tag = svg_markup[: svg_markup.index(">") + 1]
+        class_match = _CLASS_ATTR_RE.search(opening_tag)
+        classes = class_match.group(2).split() if class_match else []
+        if "twemoji" in classes:
+            return svg_markup
+        try:
+            png_bytes = bytes(resvg_py.svg_to_bytes(svg_string=svg_markup))
+        except Exception as error:
+            raise PluginError(
+                f"Could not rasterize an inline SVG on page '{page_dest_uri}': {error}",
+            ) from error
+        return f'<img src="{_data_uri(png_bytes, "image/png")}">'
+
+    return _SVG_BLOCK_RE.sub(replace, html)
+
+
+def _render_mermaid_diagrams(soup: Soup) -> None:
+    """Render Mermaid code blocks to embedded diagram images, in place.
+
+    A `<pre class="mermaid">` block - as produced by mkdocs-material's/`pymdownx.superfences`'
+    Mermaid custom fence - is replaced with an `<img>` embedding the rendered diagram as a
+    `data:image/png;base64,...` URI, using the optional `mermaidx` renderer (rendering happens
+    locally; ClickUp does not render Mermaid source sent through its Page API, and - live-verified
+    - fails to render Mermaid's own large, `<style>`-heavy SVG output too, hence PNG here as well).
+
+    If `mermaidx` isn't installed, or a block's diagram source can't be rendered (invalid or
+    unsupported Mermaid syntax), the block is left untouched: it still publishes as a plain
+    fenced code block, just without becoming a diagram. This is a deliberate exception to this
+    capability's usual "broken reference aborts the build" behavior for images - a renderer
+    limitation is not treated as an authoring error.
+
+    Parameters:
+        soup: The soup to modify.
+    """
+    try:
+        import mermaidx  # noqa: PLC0415 (optional dependency - imported lazily on purpose)
+    except ImportError:
+        return
+
+    for pre in soup.find_all("pre", class_="mermaid"):
+        code = pre.find("code")
+        source = code.get_text() if code else pre.get_text()
+        try:
+            png_bytes = bytes(mermaidx.render(source).png())
+        except Exception as error:  # noqa: BLE001 (any renderer failure falls back to the plain code block)
+            _logger.debug(f"Could not render Mermaid diagram, publishing as plain code instead: {error}")
+            continue
+        replacement = soup.new_tag("img", src=_data_uri(png_bytes, "image/png"))
+        pre.replace_with(replacement)
+
+
+def _local_reference_path(src: str) -> str | None:
+    """Return the unquoted local path portion of an `<img>`'s `src`, or `None` if it needs no local resolution.
+
+    `None` means `src` is external (has a URL scheme, e.g. `http://`, `https://`, `data:`) or has no
+    path component at all (e.g. an anchor-only reference) - either way, it should be left untouched.
+    """
+    parsed = urlsplit(src)
+    if parsed.scheme or parsed.netloc:
+        return None
+    return unquote(parsed.path) or None
+
+
+def _resolve_local_image_file(path: str, *, files: Files, page_dest_uri: str) -> File | None:
+    """Resolve a local image path (relative to the current page, or site-root-relative) to its source `File`.
+
+    Parameters:
+        path: The unquoted local path portion of an `<img>`'s `src`, as rewritten by MkDocs' own
+            relative-link resolution (relative to the current page's final URL, or site-root-relative
+            if it starts with `/`).
+        files: The collection of all files in the site.
+        page_dest_uri: The current page's destination URI (`page.file.dest_uri`).
+
+    Returns:
+        The matching `File`, or `None` if no file in the site matches - the caller must treat this as
+        a broken reference, not as "nothing to do" (that distinction is made by `_local_reference_path`).
+    """
+    if path.startswith("/"):
+        target_dest_uri = posixpath.normpath(path.lstrip("/"))
+    else:
+        target_dest_uri = posixpath.normpath(posixpath.join(posixpath.dirname(page_dest_uri), path))
+    return files.get_file_from_path(target_dest_uri)
+
+
+def _data_uri(content: bytes, mime_type: str) -> str:
+    encoded = base64.b64encode(content).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
+
+
+def _resolve_images(soup: Soup, *, files: Files, page_dest_uri: str) -> None:
+    """Embed local images as inline `data:` URIs.
+
+    An `<img>` whose `src` is already absolute/remote (or already a `data:` URI - including one
+    produced by `_rasterize_content_svgs`/`_render_mermaid_diagrams` upstream) is left untouched.
+    A local `<img>` has its source file read from disk and re-encoded as a `data:` URI.
+
+    Parameters:
+        soup: The soup to modify.
+        files: The collection of all files in the site.
+        page_dest_uri: The current page's destination URI (`page.file.dest_uri`).
+
+    Raises:
+        PluginError: When a local `<img>`'s source file cannot be resolved or read.
+    """
+    for img in soup.find_all("img"):
+        src = img.get("src")
+        if not src:
+            continue
+        src = str(src)
+        local_path = _local_reference_path(src)
+        if local_path is None:
+            continue  # already absolute/remote/data URI - nothing to embed
+        target_file = _resolve_local_image_file(local_path, files=files, page_dest_uri=page_dest_uri)
+        if target_file is None or target_file.abs_src_path is None:
+            raise PluginError(
+                f"Could not embed image '{src}' referenced on page '{page_dest_uri}': "
+                "no matching source file was found.",
+            )
+        try:
+            content = target_file.content_bytes
+        except OSError as error:
+            raise PluginError(
+                f"Could not read image '{src}' referenced on page '{page_dest_uri}': {error}",
+            ) from error
+        mime_type, _ = mimetypes.guess_type(target_file.src_uri)
+        img["src"] = _data_uri(content, mime_type or "application/octet-stream")
