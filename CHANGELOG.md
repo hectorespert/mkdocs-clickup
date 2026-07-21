@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 <!-- insertion marker -->
+## [1.0.0](https://github.com/hectorespert/mkdocs-clickup/releases/tag/1.0.0) - 2026-07-21
+
+<small>[Compare with 0.5.0](https://github.com/hectorespert/mkdocs-clickup/compare/8968edfb0e66c56e60072f0da74d37c2dc78d8ef...1.0.0)</small>
+
+First release of the fork under its own name: the plugin now actually publishes to ClickUp Pages (the previous `0.x` versions were the `mkdocs-llmstxt` ancestor this project started from, and are kept below for history).
+
+### Features
+
+- Embed images, content SVGs, and Mermaid diagrams as inline images ([8695060](https://github.com/hectorespert/mkdocs-clickup/commit/86950603389a3dae277c56185cb2f4565f212948) by Hector Espert). Assisted-By: Claude Sonnet 5 <noreply@anthropic.com>
+- Prepend a do-not-edit notice to every published ClickUp page ([c5dcd48](https://github.com/hectorespert/mkdocs-clickup/commit/c5dcd48565c2f4d86543cbd21f7831faffc83d30) by Hector Espert). Assisted-By: Claude Sonnet 5 <noreply@anthropic.com>
+- Retry transient ClickUp API failures when publishing ([d144f79](https://github.com/hectorespert/mkdocs-clickup/commit/d144f7982358569ad1243054ce6bbd58359c0573) by Hector Espert). Assisted-By: Claude Sonnet 5 <noreply@anthropic.com>
+- Mirror MkDocs navigation hierarchy as nested ClickUp pages ([cfea295](https://github.com/hectorespert/mkdocs-clickup/commit/cfea295deb070cba04af69fd5c4b4963b70133dc) by Hector Espert). Assisted-By: Claude Sonnet 5 <noreply@anthropic.com>
+- Publish idempotently, matching pages by sub_title ([0179735](https://github.com/hectorespert/mkdocs-clickup/commit/017973557d51a22a48ad959590224b7b119b1451) by Hector Espert). Assisted-By: Claude Sonnet 5 <noreply@anthropic.com>
+- Publish MkDocs pages to ClickUp Docs ([ac39bcc](https://github.com/hectorespert/mkdocs-clickup/commit/ac39bcc58d64b69ea711493a0e01adeed61e9f67) by Hector Espert). Assisted-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+### Bug Fixes
+
+- Require resvg-py>=0.3.3, 0.3.2 rejects a float zoom argument ([23d0810](https://github.com/hectorespert/mkdocs-clickup/commit/23d0810083795c9a255ca00d5b8c7c1be0495879) by Hector Espert). Assisted-By: Claude Sonnet 5 <noreply@anthropic.com>
+- Silence pre-existing mypy error in gen_credits.py ([1174297](https://github.com/hectorespert/mkdocs-clickup/commit/1174297196da0c1c62fe07076748dbc7a387bb26) by Hector Espert). Assisted-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+### Code Refactoring
+
+- Bootstrap package rename and strip llms.txt-specific behavior ([01b9e6d](https://github.com/hectorespert/mkdocs-clickup/commit/01b9e6d024beb3504554b382d38f7e9f403b5dac) by Hector Espert). Assisted-By: Claude Sonnet 5 <noreply@anthropic.com>
+
 ## [0.5.0](https://github.com/pawamoy/mkdocs-llmstxt/releases/tag/0.5.0) - 2025-11-20
 
 <small>[Compare with 0.4.0](https://github.com/pawamoy/mkdocs-llmstxt/compare/0.4.0...0.5.0)</small>
