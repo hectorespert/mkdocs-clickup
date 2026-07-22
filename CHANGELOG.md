@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 <!-- insertion marker -->
+## [2.0.0](https://github.com/hectorespert/mkdocs-clickup/releases/tag/2.0.0) - 2026-07-22
+
+<small>[Compare with 1.0.0](https://github.com/hectorespert/mkdocs-clickup/compare/1.0.0...2.0.0)</small>
+
+### ⚠ BREAKING CHANGES
+
+- The plugin no longer reads `CLICKUP_API_TOKEN` or `PUBLISH_TO_CLICKUP` from the environment directly ([9e49206](https://github.com/hectorespert/mkdocs-clickup/commit/9e49206059f034bef6124291d3b272d25a14c4dc)). Add `token` and `publish` to your `mkdocs.yml`'s `clickup` plugin block to restore the previous behavior:
+
+  ```yaml
+  - clickup:
+      token: !ENV CLICKUP_API_TOKEN
+      publish: !ENV [PUBLISH_TO_CLICKUP, false]
+  ```
+
+  Note that MkDocs' `!ENV` tag resolves values through YAML's implicit type rules, so the boolean-typed `publish` option needs `true`/`false` in the environment, not `1`/`0`.
+
+### Features
+
+- Add page-selection/filtering for ClickUp publishing ([d4c74dd](https://github.com/hectorespert/mkdocs-clickup/commit/d4c74dda58243fdf2c59927d9562b59ee760e42b) by Hector Espert). Assisted-By: Claude Sonnet 5 <noreply@anthropic.com>
+- Move token/publish from environment variables to plugin config ([9e49206](https://github.com/hectorespert/mkdocs-clickup/commit/9e49206059f034bef6124291d3b272d25a14c4dc) by Hector Espert). Assisted-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+### Bug Fixes
+
+- Use a real bool for PUBLISH_TO_CLICKUP in the ci workflow ([56f2c84](https://github.com/hectorespert/mkdocs-clickup/commit/56f2c84dcfbdec0d9552077b137eff16f3d99b09) by Hector Espert). Assisted-By: Claude Sonnet 5 <noreply@anthropic.com>
+
 ## [1.0.0](https://github.com/hectorespert/mkdocs-clickup/releases/tag/1.0.0) - 2026-07-21
 
 <small>[Compare with 0.5.0](https://github.com/hectorespert/mkdocs-clickup/compare/8968edfb0e66c56e60072f0da74d37c2dc78d8ef...1.0.0)</small>
