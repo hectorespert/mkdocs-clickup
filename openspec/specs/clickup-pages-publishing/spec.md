@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Publish MkDocs-generated page content to a ClickUp Doc as ClickUp Pages nested to mirror the MkDocs `nav` hierarchy, using a `token`/`publish`/`workspace_id`/`doc_id` plugin config (with `token`/`publish` typically sourced from the environment via MkDocs' `!ENV` YAML tag), idempotently creating or updating pages by matching them across builds via `sub_title`, and retrying transient ClickUp API failures so intermittent errors don't abort the build. Images, content SVGs, and locally-rendered Mermaid diagrams are embedded inline as `data:` URIs rather than linked, so published pages carry their visual content without depending on the site being deployed.
+Publish MkDocs-generated page content to a ClickUp Doc as ClickUp Pages nested to mirror the MkDocs `nav` hierarchy, using a `token`/`publish`/`workspace_id`/`doc_id` plugin config (with `token`/`publish` typically sourced from the environment via MkDocs' `!ENV` YAML tag), idempotently creating or updating pages by matching them across builds via `sub_title`, and retrying transient ClickUp API failures so intermittent errors don't abort the build. Which pages are published is filterable via front matter, `include`/`exclude` patterns, and a configurable default. Images, content SVGs, and locally-rendered Mermaid diagrams are embedded inline as `data:` URIs rather than linked, so published pages carry their visual content without depending on the site being deployed.
 
 ## Requirements
 
@@ -13,12 +13,57 @@ The plugin SHALL publish a ClickUp Page for every MkDocs page whose HTML was con
 - **WHEN** a MkDocs site build completes and pages have been converted to Markdown
 - **THEN** the plugin SHALL send a create or update request for each converted page, depending on whether an existing ClickUp page matches it, using the page's title as the ClickUp Page name and its generated Markdown as the page content with `content_format: text/md`
 
-### Requirement: All built pages are published
-The plugin SHALL publish every page that MkDocs converts to Markdown. There is no page-selection or filtering configuration in this capability.
+### Requirement: Page publishing is filterable
+The plugin SHALL determine whether each MkDocs page is published to ClickUp using, in order of precedence: (1) an explicit `clickup` value in the page's front matter, (2) a match against the `exclude` config patterns, (3) a match against the `include` config patterns, (4) the `default` config value. A page determined to be excluded SHALL NOT be converted to Markdown or stored for publishing — its HTML-to-Markdown conversion SHALL be skipped entirely, not merely excluded from the publish step afterward.
 
-#### Scenario: Every converted page is published
-- **WHEN** a MkDocs build completes with N pages converted to Markdown
-- **THEN** the plugin SHALL attempt to create N ClickUp Pages, one per converted page, with no exclusions
+#### Scenario: Excluded page's conversion is skipped
+- **WHEN** a page is determined to be excluded
+- **THEN** the plugin SHALL NOT run HTML-to-Markdown conversion for it (including image embedding, content SVG rasterization, or Mermaid rendering), and SHALL NOT include it in the set of pages available for publishing
+
+#### Scenario: Included page is published as before
+- **WHEN** a page is determined to be included
+- **THEN** the plugin SHALL convert and publish it exactly as it did before this capability existed
+
+### Requirement: Front matter overrides publishing inclusion for a page
+A page's YAML front matter SHALL be able to set a `clickup` key to `true` or `false`, which SHALL take precedence over both the `include`/`exclude` patterns and the `default` config value for that page.
+
+#### Scenario: Front matter explicitly excludes a page
+- **WHEN** a page's front matter sets `clickup: false`
+- **THEN** the plugin SHALL exclude that page, regardless of `include`/`exclude` patterns or `default`
+
+#### Scenario: Front matter explicitly includes a page
+- **WHEN** a page's front matter sets `clickup: true`
+- **THEN** the plugin SHALL include that page, regardless of `include`/`exclude` patterns or `default`
+
+### Requirement: Include/exclude patterns select pages by src_uri
+The plugin configuration SHALL accept `include` and `exclude` options, each a list of patterns matched against a page's `src_uri` using `fnmatch` semantics (where `*` matches any run of characters, including `/`). For a page without an explicit front-matter `clickup` value, a match against any `exclude` pattern SHALL exclude it; otherwise a match against any `include` pattern SHALL include it.
+
+#### Scenario: A page matches an exclude pattern
+- **WHEN** a page's `src_uri` matches a configured `exclude` pattern and its front matter has no explicit `clickup` value
+- **THEN** the plugin SHALL exclude that page
+
+#### Scenario: A page matches an include pattern
+- **WHEN** a page's `src_uri` matches a configured `include` pattern, does not match any `exclude` pattern, and its front matter has no explicit `clickup` value
+- **THEN** the plugin SHALL include that page
+
+#### Scenario: A page matches both an include and an exclude pattern
+- **WHEN** a page's `src_uri` matches both a configured `include` pattern and a configured `exclude` pattern
+- **THEN** the plugin SHALL exclude that page (`exclude` takes precedence)
+
+#### Scenario: A pattern matches across path segments
+- **WHEN** a configured pattern contains `*` and a page's `src_uri` has multiple path segments (e.g. `internal-repo/sub/deep/page.md` against the pattern `internal-repo/*`)
+- **THEN** the plugin SHALL treat it as a match, since `*` crosses `/` under `fnmatch` semantics
+
+### Requirement: A configurable default determines unmatched pages
+The plugin configuration SHALL accept a `default` option, either `"all"` (the default) or `"none"`. For a page whose front matter has no explicit `clickup` value and whose `src_uri` matches neither an `include` nor an `exclude` pattern, the plugin SHALL include it when `default` is `"all"` and exclude it when `default` is `"none"`.
+
+#### Scenario: Default all publishes an unmatched page
+- **WHEN** `default` is `"all"` (or unset) and a page matches no front-matter override or pattern
+- **THEN** the plugin SHALL include that page
+
+#### Scenario: Default none excludes an unmatched page
+- **WHEN** `default` is `"none"` and a page matches no front-matter override or pattern
+- **THEN** the plugin SHALL exclude that page
 
 ### Requirement: Publishing is opt-in per invocation
 The plugin SHALL only attempt to publish pages to ClickUp when the `publish` plugin configuration option is set to `true`. When it is unset or `false` (the default), `on_post_build` SHALL do nothing — no configuration validation, no HTTP calls — regardless of whether `workspace_id`, `doc_id`, or `token` are set or valid.
@@ -57,11 +102,15 @@ The plugin SHALL set each published ClickUp Page's `parent_page_id` to reflect t
 - **THEN** the plugin SHALL publish that page without a `parent_page_id`, same as a flat root-level page
 
 ### Requirement: A Section's anchor is a real index page when one exists
-When a `nav` section's direct children include a page whose source path ends in `index.md` or `README.md`, the plugin SHALL use that page as the section's anchor: its ClickUp `page_id` becomes the `parent_page_id` for the section's other members.
+When a `nav` section's direct children include a page whose source path ends in `index.md` or `README.md`, and that page is itself being published (not excluded by page-selection/filtering), the plugin SHALL use that page as the section's anchor: its ClickUp `page_id` becomes the `parent_page_id` for the section's other members. An `index.md`/`README.md` child that is excluded from publishing SHALL NOT be treated as the section's anchor — the section SHALL fall back to a placeholder anchor instead, as if it had no index child at all.
 
 #### Scenario: Section with an index page
-- **WHEN** a `nav` section has a direct child page ending in `index.md` or `README.md`
+- **WHEN** a `nav` section has a direct child page ending in `index.md` or `README.md`, and that page is being published
 - **THEN** the plugin SHALL NOT create a placeholder page for that section, and SHALL use the index page's ClickUp `page_id` as the `parent_page_id` for the section's other children
+
+#### Scenario: Section's index page is excluded from publishing
+- **WHEN** a `nav` section's direct child page ending in `index.md`/`README.md` is excluded from publishing (via front matter or patterns)
+- **THEN** the plugin SHALL treat the section as if it had no index child, creating or using a placeholder anchor instead of pointing sibling pages' `parent_page_id` at the excluded (never-published) page
 
 ### Requirement: A Section's anchor is a placeholder page when no index page exists
 When a `nav` section has no direct child page ending in `index.md` or `README.md`, the plugin SHALL create or update a placeholder ClickUp Page to act as that section's anchor. The placeholder SHALL have empty content and a `sub_title` synthesized from the section's title breadcrumb (its own title prefixed by its ancestor sections' titles), distinguishable from any real page's `sub_title` (which is always a `src_uri`).
