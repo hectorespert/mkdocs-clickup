@@ -190,7 +190,7 @@ jobs:
 
     - name: Publish documentation to ClickUp
       env:
-        PUBLISH_TO_CLICKUP: "1"
+        PUBLISH_TO_CLICKUP: "true"
         CLICKUP_API_TOKEN: ${{ secrets.CLICKUP_API_TOKEN }}
         CLICKUP_DOC_ID: "2kxuyd0w-512"
       run: |
