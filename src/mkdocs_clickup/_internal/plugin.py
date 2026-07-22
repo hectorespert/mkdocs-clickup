@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import fnmatch
 import mimetypes
 import posixpath
 import re
@@ -85,6 +86,14 @@ class MkdocsClickUpPlugin(BasePlugin[_PluginConfig]):
             page: The page object.
             files: The collection of all files in the site, used to resolve local image sources.
         """
+        if not _is_page_included(
+            page,
+            default=self.config.default,
+            include=self.config.include,
+            exclude=self.config.exclude,
+        ):
+            return html
+
         page_md = _generate_page_markdown(
             html,
             should_autoclean=self.config.autoclean,
@@ -341,17 +350,24 @@ def _is_index_page(item: Any) -> bool:
     return PurePosixPath(item.file.src_uri).name in ("index.md", "README.md")
 
 
-def _find_index_child(section: Any) -> str | None:
+def _find_index_child(section: Any, published_uris: set[str]) -> str | None:
     """Return the src_uri of a Section's direct index/README child page, if any.
+
+    A candidate child only counts as the section's anchor if it is actually
+    being published - an `index.md`/`README.md` page excluded by page-selection
+    filtering must not be selected, since no ClickUp page will exist for it
+    this build. Such a section falls back to a placeholder anchor instead,
+    exactly as if it had no index child at all.
 
     Parameters:
         section: The MkDocs nav Section to inspect.
+        published_uris: `src_uri`s of pages actually being published this build.
 
     Returns:
-        The child page's `src_uri`, or `None` if the section has no such child.
+        The child page's `src_uri`, or `None` if the section has no such (published) child.
     """
     for child in section.children:
-        if _is_index_page(child):
+        if _is_index_page(child) and child.file.src_uri in published_uris:
             return child.file.src_uri
     return None
 
@@ -429,13 +445,14 @@ def _build_publish_units(
     """
     anchor_of: dict[Any, str] = {}
     units: dict[str, tuple[str, str, str | None]] = {}
+    published_uris = set(md_pages)
 
     def anchor(section: Any) -> str | None:
         if section is None:
             return None
         if section in anchor_of:
             return anchor_of[section]
-        index_src_uri = _find_index_child(section)
+        index_src_uri = _find_index_child(section, published_uris)
         if index_src_uri is not None:
             anchor_of[section] = index_src_uri
             return index_src_uri
@@ -550,6 +567,35 @@ _converter = MarkdownConverter(
     escape_underscores=False,
     heading_style=ATX,
 )
+
+
+def _is_page_included(page: Page, *, default: str, include: list[str], exclude: list[str]) -> bool:
+    """Resolve whether a page should be published to ClickUp.
+
+    Precedence, most specific first: an explicit `clickup` front-matter value
+    (`True`/`False`) wins outright; otherwise a match against `exclude`
+    patterns wins over a match against `include` patterns; otherwise `default`.
+    Patterns are matched against the page's `src_uri` using `fnmatch`
+    semantics, where `*` matches across `/` (not gitignore-style).
+
+    Parameters:
+        page: The page being considered for publishing.
+        default: `"all"` (include unmatched pages) or `"none"` (exclude them).
+        include: Patterns that include a page when matched.
+        exclude: Patterns that exclude a page when matched, taking precedence over `include`.
+
+    Returns:
+        Whether the page should be converted and published.
+    """
+    explicit = page.meta.get("clickup")
+    if isinstance(explicit, bool):
+        return explicit
+    src_uri = page.file.src_uri
+    if any(fnmatch.fnmatch(src_uri, pattern) for pattern in exclude):
+        return False
+    if any(fnmatch.fnmatch(src_uri, pattern) for pattern in include):
+        return True
+    return default == "all"
 
 
 def _generate_page_markdown(

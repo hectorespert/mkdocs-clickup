@@ -36,6 +36,44 @@ PUBLISH_TO_CLICKUP=true CLICKUP_API_TOKEN=pk_... mkdocs build
 
 Without `publish` set to `true`, the plugin does nothing — `mkdocs build`, `mkdocs serve`, and `mkdocs gh-deploy` all fire the same build hooks internally, and publishing unconditionally would create ClickUp pages on every local save during development. `mkdocs gh-deploy` also runs through this gate, so `PUBLISH_TO_CLICKUP=true mkdocs gh-deploy` publishes to ClickUp in addition to deploying to GitHub Pages.
 
+### Filtering which pages get published
+
+By default, every page MkDocs builds is published. Three config options let you narrow that down, resolved in this order for each page (most specific wins):
+
+1. **Front matter** — a page can set `clickup: true` or `clickup: false` in its own front matter, which always wins over the config below.
+2. **`exclude`/`include` patterns** — lists of patterns matched against each page's source path (`src_uri`), e.g. `docs/internal/page.md`. A page matching `exclude` is excluded; a page matching `include` (and not `exclude`) is included. If a page matches both, `exclude` wins.
+3. **`default`** — `"all"` (the default) publishes anything not otherwise excluded; `"none"` publishes nothing unless explicitly included via a pattern or front matter.
+
+```yaml title="mkdocs.yml"
+plugins:
+- clickup:
+    default: all
+    exclude:
+      - "drafts/*"
+```
+
+```markdown title="drafts/wip.md (front matter overrides exclude/include/default)"
+---
+clickup: true
+---
+
+# This page publishes anyway, front matter always wins
+```
+
+> [!IMPORTANT]
+> Patterns use [`fnmatch`](https://docs.python.org/3/library/fnmatch.html) semantics, not `.gitignore` semantics: `*` matches across `/`, so `"internal-repo/*"` matches both `internal-repo/index.md` and `internal-repo/sub/deep/page.md` — there's no need for a separate `**` syntax.
+
+This is particularly useful with [`mkdocs-monorepo-plugin`](https://github.com/backstage/mkdocs-monorepo-plugin): each `!include`d sub-repo's pages get an alias-prefixed `src_uri` (e.g. `internal-repo/index.md`), so a single pattern can bulk-exclude (or, with `default: none`, bulk-include) an entire aggregated sub-repo without touching its content:
+
+```yaml title="mkdocs.yml"
+plugins:
+- clickup:
+    exclude:
+      - "internal-repo/*"
+```
+
+An excluded page's HTML-to-Markdown conversion (including image embedding, SVG rasterization, and Mermaid rendering) is skipped entirely, not just excluded from publishing afterward. A page previously published, then later excluded, is archived by the same best-effort mechanism used for renamed/deleted pages (see below).
+
 ### Known limitations
 
 - **Publishing is idempotent, keyed by page path.** Before creating or updating any page, the plugin fetches the Doc's existing pages and matches them against the current build's pages using ClickUp's `sub_title` field, which holds the MkDocs page's source path (not the page title, which MkDocs doesn't guarantee to be unique). A match is updated in place (same ClickUp page, same URL); no match is created. A previously-published page whose source file was renamed or deleted (no current match) is archived — removed from the Doc's page listing — on a best-effort basis: `archived` is not part of ClickUp's documented Edit Page API, so if archiving fails or stops working, the plugin logs a warning and continues rather than failing the build; the page simply stays visible. A renamed source file is treated as delete-old (archived) + create-new, so it gets a new ClickUp page and URL rather than keeping the old one.
@@ -43,7 +81,6 @@ Without `publish` set to `true`, the plugin does nothing — `mkdocs build`, `mk
 - **Published pages carry a "do not edit" notice.** The docs are generated from the source repo (the source of truth) and every page's content is overwritten on each publish, so each ClickUp page — and each section placeholder — is prefixed with a short notice telling readers not to edit it in ClickUp, with an "Edit the source" link to the file on your repo host when `repo_url`/`edit_uri` are set. ClickUp's API exposes no way to lock a page or make it read-only (verified against a real workspace: `protected` isn't settable, and there are no sharing/permission endpoints), so the notice is a deterrent, not enforcement. For hard prevention, share the ClickUp Doc as **view-only** with your workspace from the ClickUp UI (a manual admin action) — that leaves only the publishing token able to write, while everyone else sees a faithful mirror of the code.
 - **Pages mirror the MkDocs navigation hierarchy.** Each `nav` section is anchored by a real page (its direct `index.md`/`README.md` child, if it has one) or, if it has none, by an empty placeholder page created just to hold that spot in the tree — both cases use ClickUp's `parent_page_id` (undocumented in ClickUp's public API reference, like `archived`, but verified to work reliably, including re-parenting an existing page when its position in the hierarchy changes between builds). This is the default behavior; there's no configuration to keep pages flat. A flat site (no nested `nav` sections) publishes exactly as before. Sibling order within ClickUp may not match your `nav:` order — there's no documented API control over it.
 - **Links are published as-authored.** Relative links between pages are not rewritten in any way; they are not resolved against ClickUp's own addressing model. Confirmed against a real ClickUp workspace: ClickUp itself parses submitted Markdown into its own document model on ingestion, and a relative link pointing at a target it can't resolve (e.g. `other.md`) is normalized away, keeping only the link's text — this is ClickUp's own behavior, not something the plugin does.
-- **Every page MkDocs builds is published** — there's no page-selection or filtering configuration yet.
 - **Images are embedded inline, not linked.** Local `<img>` sources are read from disk and embedded as `data:` URIs directly in the published Markdown — no dependency on the site being deployed or `site_url` being set. Already-absolute/remote image URLs are published unchanged. Decorative icons (emoji and `:material-*:`-style shortcodes) are still stripped, same as before; a broken local image reference fails the build rather than publishing silently-missing content.
 - **Content SVGs are rasterized to PNG, not embedded as SVG.** An inline `<svg>` diagram is rasterized locally (via `resvg`) and embedded as a `data:image/png` URI. This isn't a stylistic choice: live-verified against a real ClickUp workspace, an SVG survives round-tripping through the plugin's HTML parser with case-sensitive attributes silently corrupted (`viewBox` → `viewbox`), and separately, ClickUp itself was found to fail rendering a large, `<style>`-heavy SVG even when well-formed. PNG sidesteps both.
 - **Mermaid diagrams are rendered locally, as an opt-in extra.** A `` ```mermaid `` fenced code block (as produced by mkdocs-material's diagram support) is rendered to a PNG image at build time (same reasoning as above — Mermaid's own SVG output failed to render in ClickUp) and embedded the same way as any other content image — ClickUp does not render Mermaid source submitted through its Page API, even though its own editor can render Mermaid pasted manually. This requires the `mermaid` extra:

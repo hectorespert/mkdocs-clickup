@@ -33,7 +33,7 @@ def fixture_mkdocs_conf(request: pytest.FixtureRequest, tmp_path: Path) -> MkDoc
     Path(conf.docs_dir).mkdir(exist_ok=True)
     for page, content in pages.items():
         page_file = Path(conf.docs_dir, page)
-        page_file.parent.mkdir(exist_ok=True)
+        page_file.parent.mkdir(parents=True, exist_ok=True)
         page_file.write_text(content)
     assert conf.validate() == ([], [])
     if "toc" not in conf.markdown_extensions:
